@@ -23,7 +23,7 @@ const METRICS = [
   { key: "glucose", label: "Đường huyết", unit: "mg/dL" },
 ];
 const KEYS = ["heart_rate", "systolic", "diastolic", "spo2", "glucose"];
-const LEVELS = { safe: "Trong ngưỡng an toàn", attention: "Cần chú ý", alert: "Nên đi khám sớm", emergency: "Nguy hiểm", watch: "Cần theo dõi" };
+const LEVELS = { safe: "An toàn", attention: "Cần chú ý", alert: "Nên đi khám sớm", emergency: "Nguy hiểm", watch: "Cần theo dõi" };
 const SUMMARY_FALLBACK = { safe: "Các chỉ số vừa đo chưa chạm ngưỡng cảnh báo.", attention: "Có chỉ số cần theo dõi. Hãy đo lại.", alert: "Nguy cơ tổng hợp ở mức cao. Nên sắp xếp đi khám.", emergency: "Có chỉ số ở mức nguy hiểm." };
 const SOURCE_NAMES = { manual: "Nhập tay", ble: "Máy đo Bluetooth", simulation: "Dữ liệu mẫu", document: "Từ giấy tờ" };
 // Readings copied from a scanned document are history: dated by the document and never the current state.
@@ -111,11 +111,11 @@ function valueOf(key, values = {}) {
 function statusOf(key, v) {
   if (v[key] == null) return ["neutral", "Chưa đo"];
   const n = v[key];
-  if (key === "heart_rate") return n < 40 || n > 150 ? ["alert", "Nguy hiểm"] : n < 50 || n > 110 ? ["attention", "Cần chú ý"] : ["safe", "Trong ngưỡng an toàn"];
-  if (key === "spo2") return n < 90 ? ["alert", "Nguy hiểm"] : n < 95 ? ["attention", "Thấp, cần chú ý"] : ["safe", "Trong ngưỡng an toàn"];
-  if (key === "systolic") return n >= 180 || v.diastolic >= 120 ? ["alert", "Nguy hiểm"] : n >= 140 || v.diastolic >= 90 ? ["attention", "Cao, cần chú ý"] : ["safe", "Trong ngưỡng an toàn"];
-  if (key === "glucose") return n < 54 || n > 300 ? ["alert", "Nguy hiểm"] : n < 70 || n > 180 ? ["attention", "Cần chú ý"] : ["safe", "Trong ngưỡng an toàn"];
-  return ["safe", "Trong ngưỡng an toàn"];
+  if (key === "heart_rate") return n < 40 || n > 150 ? ["alert", "Nguy hiểm"] : n < 50 || n > 110 ? ["attention", "Cần chú ý"] : ["safe", "An toàn"];
+  if (key === "spo2") return n < 90 ? ["alert", "Nguy hiểm"] : n < 95 ? ["attention", "Thấp, cần chú ý"] : ["safe", "An toàn"];
+  if (key === "systolic") return n >= 180 || v.diastolic >= 120 ? ["alert", "Nguy hiểm"] : n >= 140 || v.diastolic >= 90 ? ["attention", "Cao, cần chú ý"] : ["safe", "An toàn"];
+  if (key === "glucose") return n < 54 || n > 300 ? ["alert", "Nguy hiểm"] : n < 70 || n > 180 ? ["attention", "Cần chú ý"] : ["safe", "An toàn"];
+  return ["safe", "An toàn"];
 }
 // Profile picture: the uploaded photo, or the first letter of the given name (the last word of a Vietnamese name).
 const initialOf = name => (name.trim().split(/\s+/).pop() || "?").charAt(0).toUpperCase();
@@ -484,15 +484,17 @@ function renderHistory() {
   }
   // One card per reading, one line per value. The mark beside a value says how that value stands (shape and colour,
   // with the word for screen readers); the tag says how the whole reading stands.
-  $("#history-list").innerHTML = '<ul class="reading-cards">' + records.map(record => {
+  // Only the newest readings show at first (2 on a phone, 3 on a wide screen); the rest wait behind one button.
+  const first = matchMedia("(max-width: 760px)").matches ? 2 : 3, hidden = state.historyAll ? 0 : Math.max(0, records.length - first);
+  $("#history-list").innerHTML = '<ul class="reading-cards">' + records.slice(0, records.length - hidden).map(record => {
     const level = recordLevel(record);
     const values = METRICS.filter(m => record.vitals[m.key] != null).map(m => {
       const [mark, word] = statusOf(m.key, record.vitals);
-      return '<li><span class="value-mark ' + mark + '" aria-hidden="true"></span><span>' + m.label + '</span><strong>' + esc(withUnit(valueOf(m.key, record.vitals), m.unit)) + '</strong><span class="visually-hidden">, ' + esc(word.toLowerCase()) + "</span></li>";
+      return '<li><span class="value-mark ' + mark + '" aria-hidden="true"></span><span>' + (m.key === "spo2" ? "SpO₂" : m.label) + '</span><strong>' + esc(withUnit(valueOf(m.key, record.vitals), m.unit)) + '</strong><span class="visually-hidden">, ' + esc(word.toLowerCase()) + "</span></li>";
     }).join("");
-    return '<li class="reading-card"><div class="reading-card-head"><div><strong>' + esc(when(record)) + '</strong><span class="source">' + esc(SOURCE_NAMES[record.vitals.source || "manual"]) + '</span></div><span class="tag ' + (level === "emergency" ? "alert" : level) + '">' + (level === "safe" ? "An toàn" : LEVELS[level]) + "</span></div><ul>" + values +
+    return '<li class="reading-card"><div class="reading-card-head"><div><strong>' + esc(when(record)) + '</strong><span class="source">' + esc(SOURCE_NAMES[record.vitals.source || "manual"]) + '</span></div><span class="tag ' + (level === "emergency" ? "alert" : level) + '">' + LEVELS[level] + "</span></div><ul>" + values +
       '</ul><button class="link-button" data-record="' + esc(record.id) + '">Xem chi tiết</button></li>';
-  }).join("") + "</ul>";
+  }).join("") + "</ul>" + (hidden ? '<button class="btn outline history-more" id="history-more">Hiển thị thêm (' + hidden + ")</button>" : "");
 }
 async function deleteAssessment(id) {
   if (state.viewing) return;
@@ -1509,7 +1511,10 @@ function bindEvents() {
   $("#report-days").addEventListener("change", renderReport);
   $("#report-print").addEventListener("click", () => window.print());
   $("#report-back").addEventListener("click", () => { screen("app"); navigate("history"); });
-  $("#history-filter").addEventListener("change", renderHistory);
+  $("#history-filter").addEventListener("change", () => { state.historyAll = false; renderHistory(); });
+  $("#history-list").addEventListener("click", event => { if (event.target.closest("#history-more")) { state.historyAll = true; renderHistory(); } });
+  // Charts are drawn at the width they have at that moment, so they are drawn again when the window changes size.
+  window.addEventListener("resize", () => { if (state.user && state.view === "history") renderTrends(); });
   $("#rating-buttons").innerHTML = [1, 2, 3, 4, 5].map(n => '<button type="button" data-rating="' + n + '" aria-pressed="false">' + n + "</button>").join("");
   $("#rating-buttons").addEventListener("click", event => {
     const button = event.target.closest("[data-rating]");

@@ -250,7 +250,8 @@ legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
 .member-count { margin-top: 12px; max-width: 280px; }
 
 /* History */
-.trend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+/* minmax(0, ...): a chart drawn at an earlier, wider size must not hold its column open and push the page sideways. */
+.trend-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 24px; }
 .trend-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 8px; }
 .trend-head h3 { margin: 0; }
 .trend-head small { font-weight: 400; }
@@ -259,7 +260,8 @@ legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
 .trend-legend span { display: inline-block; width: 18px; height: 3px; margin-right: 8px; border-radius: 2px; vertical-align: middle; }
 .key-sys { background: #0b57a4; }
 .key-dia { background: #3d8fd6; }
-.trend-chart { position: relative; height: 200px; border-radius: 4px; }
+.trend-chart { position: relative; height: 200px; border-radius: 4px; min-width: 0; }
+.chart-svg { max-width: 100%; }
 .trend-empty { margin: 8px 0 0; }
 .chart-svg { display: block; overflow: visible; }
 .chart-band { fill: #17663a; fill-opacity: .08; }
@@ -277,6 +279,8 @@ legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
 /* Readings list: a card per reading, a line per value. */
 .reading-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 16px; }
 .reading-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; font-variant-numeric: tabular-nums; }
+.reading-card { animation: view-in .22s var(--ease-out); }
+.history-more { display: flex; margin: 16px auto 0; }
 .reading-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .reading-card ul { list-style: none; margin: 0 0 4px; padding: 0; }
 .reading-card ul li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
@@ -558,7 +562,7 @@ body.viewing .own-only { display: none !important; }
   .status-panel .btn.primary { width: 100%; }
   .reading-list, .care-list, ul.medicine-rows { padding: 0 16px; }
   .panel.empty-state { padding: 20px 16px; }
-  .field-grid, .trend-grid, .facts-2col, .tip-grid, .risk-grid, .slot-grid { grid-template-columns: 1fr; }
+  .field-grid, .trend-grid, .facts-2col, .tip-grid, .risk-grid, .slot-grid { grid-template-columns: minmax(0, 1fr); }
   .risk-key li { grid-template-columns: 1fr auto; }
   /* The status tag does not wrap, so on a phone it takes its own line under the name and the value. */
   .extracted-metrics > div { grid-template-columns: 1fr auto; }
