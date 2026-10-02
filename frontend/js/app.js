@@ -482,11 +482,17 @@ function renderHistory() {
     $("#history-list").innerHTML = '<div class="empty-state"><h3>' + (state.records.length ? "Không có lần đo phù hợp" : "Chưa có lần đo nào") + '</h3><p>Các lần đo sẽ hiện ở đây sau khi bạn ghi chỉ số.</p><button class="btn outline" id="history-add">Ghi chỉ số</button></div>';
     return;
   }
-  $("#history-list").innerHTML = '<table class="history-table"><thead><tr><th>Thời gian</th><th>Chỉ số</th><th>Kết quả</th><th><span class="visually-hidden">Thao tác</span></th></tr></thead><tbody>' + records.map(record => {
-    const readings = METRICS.filter(m => record.vitals[m.key] != null).map(m => withUnit(valueOf(m.key, record.vitals), m.unit)).join(", ");
+  // One card per reading, one line per value. The mark beside a value says how that value stands (shape and colour,
+  // with the word for screen readers); the tag says how the whole reading stands.
+  $("#history-list").innerHTML = '<ul class="reading-cards">' + records.map(record => {
     const level = recordLevel(record);
-    return "<tr><td>" + esc(when(record)) + '<span class="source">' + esc(SOURCE_NAMES[record.vitals.source || "manual"]) + "</span></td><td>" + esc(readings) + '</td><td><span class="tag ' + (level === "emergency" ? "alert" : level) + '">' + LEVELS[level] + '</span></td><td><button class="link-button" data-record="' + esc(record.id) + '">Xem chi tiết</button></td></tr>';
-  }).join("") + "</tbody></table>";
+    const values = METRICS.filter(m => record.vitals[m.key] != null).map(m => {
+      const [mark, word] = statusOf(m.key, record.vitals);
+      return '<li><span class="value-mark ' + mark + '" aria-hidden="true"></span><span>' + m.label + '</span><strong>' + esc(withUnit(valueOf(m.key, record.vitals), m.unit)) + '</strong><span class="visually-hidden">, ' + esc(word.toLowerCase()) + "</span></li>";
+    }).join("");
+    return '<li class="reading-card"><div class="reading-card-head"><div><strong>' + esc(when(record)) + '</strong><span class="source">' + esc(SOURCE_NAMES[record.vitals.source || "manual"]) + '</span></div><span class="tag ' + (level === "emergency" ? "alert" : level) + '">' + (level === "safe" ? "An toàn" : LEVELS[level]) + "</span></div><ul>" + values +
+      '</ul><button class="link-button" data-record="' + esc(record.id) + '">Xem chi tiết</button></li>';
+  }).join("") + "</ul>";
 }
 async function deleteAssessment(id) {
   if (state.viewing) return;
