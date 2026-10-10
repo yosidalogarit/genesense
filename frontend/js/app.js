@@ -334,7 +334,7 @@ function setNavDrawer(open, restoreFocus = true) {
   scrim.setAttribute("aria-hidden", String(!open));
   drawer.toggleAttribute("inert", !open);
   toggle.setAttribute("aria-expanded", String(open));
-  toggle.setAttribute("aria-label", open ? "Đóng bảng điều hướng" : "Mở bảng điều hướng");
+  toggle.setAttribute("aria-label", open ? "Đóng menu" : "Mở menu");
   if (open) ($("#nav-close") || drawer).focus({ preventScroll: true });
   else if (restoreFocus && !$("#app-screen").classList.contains("hidden")) toggle.focus({ preventScroll: true });
 }
@@ -463,7 +463,13 @@ function rangeBar(key, value) {
   const scale = ZONES[key];
   const pos = v => ((Math.min(scale.max, Math.max(scale.min, v)) - scale.min) / (scale.max - scale.min) * 100).toFixed(1);
   // Positions travel as data attributes and are applied by placeRanges(): the Content-Security-Policy blocks style attributes.
-  return '<div class="range" aria-hidden="true">' + scale.zones.map(([from, to, level]) => '<span class="range-zone ' + level + '" data-left="' + pos(from) + '" data-width="' + (pos(to) - pos(from)).toFixed(1) + '"></span>').join("") + '<span class="range-mark" data-left="' + pos(value) + '"></span></div>';
+  return '<div class="range" aria-hidden="true">' + scale.zones.map(([from, to, level]) => '<span class="range-zone ' + level + '" data-left="' + pos(from) + '" data-width="' + (pos(to) - pos(from)).toFixed(1) + '"></span>').join("") + '<span class="range-mark" data-left="' + pos(value) + '"></span>' + rangeTicks(scale, pos) + "</div>";
+}
+function rangeTicks(scale, pos) {
+  const edges = scale.zones.slice(1).map(([from], i) => ({ value: from, safe: scale.zones[i][2] === "safe" || scale.zones[i + 1][2] === "safe" }));
+  const shown = [];
+  [...edges.filter(e => e.safe), ...edges.filter(e => !e.safe)].forEach(e => { if (shown.every(s => Math.abs(pos(s) - pos(e.value)) >= 14)) shown.push(e.value); });
+  return shown.map(v => '<span class="range-tick" data-left="' + pos(v) + '">' + num(v) + "</span>").join("");
 }
 function placeRanges(root) {
   root.querySelectorAll("[data-left]").forEach(el => {
@@ -856,7 +862,7 @@ function renderGenetics() {
       familyNode(h, member("maternal-grandfather"), "ft-mgf") + familyNode(h, member("maternal-grandmother"), "ft-mgm") +
       '<span class="ft-join ft-join-p"></span><span class="ft-join ft-join-m"></span>' +
       familyNode(h, member("father"), "ft-father") + familyNode(h, member("mother"), "ft-mother") +
-      '<span class="ft-join ft-join-c"></span>' +
+      '<span class="ft-join ft-join-c"></span><span class="ft-side ft-side-c">' + (state.viewing ? esc(h.display_name) : "Bạn") + " và anh chị em</span>" +
       '<div class="ft-children"><div class="ft-node you ' + (conditions.length ? "known" : "none") + '"><span class="ft-rel">' + (state.viewing ? esc(h.display_name) : "Bạn") + '</span><span class="ft-state">' + esc(conditions.join(", ") || "Không khai báo bệnh") + "</span></div>" + familyNode(h, member("sibling")) + "</div>" +
     "</div>" +
     '<ul class="ft-legend"><li><span class="ft-key known"></span>Có bệnh đã biết</li><li><span class="ft-key none"></span>Không có bệnh đã biết</li><li><span class="ft-key unknown"></span>Chưa rõ</li></ul>' +
@@ -902,7 +908,7 @@ function renderReport() {
   const mark = v => { const levels = METRICS.map(m => statusOf(m.key, v)[0]); return levels.includes("alert") ? "Nguy hiểm" : levels.includes("attention") ? "Cần chú ý" : ""; };
   const family = MEMBERS.map(m => {
     const saved = h.family_history.find(row => row.member_id === m.id);
-    const text = saved?.knowledge === "known" && saved.conditions?.length ? saved.conditions.map(conditionName).join(", ") : saved?.knowledge === "none" ? "Không có bệnh đã biết" : "Chưa rõ";
+    const text = saved?.knowledge === "known" && saved.conditions?.length ? (saved.affected_count > 1 ? saved.affected_count + " người: " : "") + saved.conditions.map(conditionName).join(", ") : saved?.knowledge === "none" ? "Không có bệnh đã biết" : "Chưa rõ";
     return "<tr><td>" + m.label + "</td><td>" + esc(text) + "</td></tr>";
   }).join("");
   const notice = "Phiếu do người dùng tự ghi bằng ứng dụng GeneSense. Không phải kết quả khám bệnh, không có giá trị chẩn đoán.";
@@ -1675,7 +1681,7 @@ function fieldHint(input, text = "") {
     input.setAttribute("aria-describedby", hint.id);
   }
   if (hint) { hint.textContent = text; hint.classList.toggle("hidden", !text); }
-  input.toggleAttribute("aria-invalid", Boolean(text));
+  if (text) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
 }
 function checkFields(form) {
   let ok = true;
@@ -1872,6 +1878,7 @@ function bindEvents() {
   document.addEventListener("click", event => {
     const nav = event.target.closest("[data-nav]");
     if (nav) {
+      if (nav.dataset.nav === "records") state.recordsTab = null;
       navigate(nav.dataset.nav);
       if (nav.closest("#app-nav-drawer")) {
         setNavDrawer(false, false);

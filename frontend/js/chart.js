@@ -101,7 +101,7 @@ export class TrendChart {
 
     for (const t of c.thresholds || []) {
       svg.append(el("line", { class: "chart-threshold", x1: PAD.left, x2: PAD.left + plotW, y1: y(t.value), y2: y(t.value), stroke: t.color }));
-      svg.append(el("text", { class: "chart-axis chart-threshold-label", x: PAD.left + plotW - 4, y: y(t.value) - 6, "text-anchor": "end" }, t.value));
+      svg.append(el("text", { class: "chart-axis chart-threshold-label", x: PAD.left + 4, y: y(t.value) - 6, "text-anchor": "start" }, t.value));
     }
     this.cross = el("line", { class: "chart-cross hidden", y1: PAD.top, y2: PAD.top + plotH });
     svg.append(this.cross);
