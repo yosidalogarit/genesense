@@ -650,8 +650,8 @@ function renderPendingReadings() {
 function renderWeeklyBloodPressure() {
   const panel = $("#weekly-bp-summary"), summary = state.weeklyBP;
   panel.innerHTML = '<h3>Trung bình huyết áp 7 ngày</h3><p class="note">Phân nhóm theo giờ ghi nhận; chỉ để xem xu hướng.</p>' +
-    '<div class="weekly-bp-grid">' + [["Sáng · 05–11:59", summary?.morning], ["Tối · 17–23:59", summary?.evening]].map(([label, group]) =>
-      '<div class="weekly-bp-card"><strong>' + label + '</strong><b>' + (group?.count ? esc(num(group.systolic) + "/" + num(group.diastolic) + " mmHg") : "Chưa có số đo") + '</b><span class="note">' + (group?.count ? group.count + " lần đo" : "Trong khung giờ này") + "</span></div>").join("") + "</div>";
+    '<div class="weekly-bp-grid">' + [["Sáng (5–12 giờ)", summary?.morning, "Chưa đo buổi sáng"], ["Tối (17–24 giờ)", summary?.evening, "Chưa đo buổi tối"]].map(([label, group, empty]) =>
+      '<div class="weekly-bp-card"><strong>' + label + '</strong><b>' + (group?.count ? esc(num(group.systolic) + "/" + num(group.diastolic) + " mmHg") : empty) + '</b><span class="note">' + (group?.count ? group.count + " lần đo" : "Trong 7 ngày qua") + "</span></div>").join("") + "</div>";
 }
 function renderHistory() {
   renderPendingReadings();
@@ -1520,6 +1520,7 @@ async function deleteMedicalRecord(id) {
 function openMeasurement(mode = "manual") {
   if (state.viewing) return;
   errorAt("#measurement-error");
+  $$("#measurement-form input[type=number]").forEach(input => fieldHint(input));
   $("#measurement-dialog").showModal();
   setMeasureMode(mode);
 }
@@ -1658,10 +1659,35 @@ async function saveMeasurement(values, source, samples = []) {
   }
   finally { state.busy = false; button.disabled = false; button.innerHTML = original; if (source !== "manual") renderDevice(); }
 }
+// The browser's own range bubbles are English and vanish; each field gets a Vietnamese hint under it instead.
+const FIELD_NAMES = { systolic: "Số trên", diastolic: "Số dưới", heart_rate: "Nhịp tim", spo2: "SpO₂", glucose: "Đường huyết" };
+function fieldHint(input, text = "") {
+  let hint = document.getElementById("hint-" + input.name);
+  if (!hint && text) {
+    hint = document.createElement("span");
+    hint.id = "hint-" + input.name; hint.className = "field-hint";
+    input.insertAdjacentElement("afterend", hint);
+    input.setAttribute("aria-describedby", hint.id);
+  }
+  if (hint) { hint.textContent = text; hint.classList.toggle("hidden", !text); }
+  input.toggleAttribute("aria-invalid", Boolean(text));
+}
+function checkFields(form) {
+  let ok = true;
+  form.querySelectorAll("input[type=number]").forEach(input => {
+    const v = input.validity;
+    const text = v.valid ? "" : v.rangeUnderflow || v.rangeOverflow
+      ? FIELD_NAMES[input.name] + " thường từ " + num(Number(input.min)) + " đến " + num(Number(input.max)) + ". Hãy kiểm tra lại."
+      : "Hãy nhập một số, ví dụ 120 hoặc 120,5.";
+    fieldHint(input, text);
+    if (text && ok) { ok = false; input.focus(); }
+  });
+  return ok;
+}
 async function submitManual(event) {
   event.preventDefault();
   const form = $("#measurement-form");
-  if (!form.reportValidity()) return;
+  if (!checkFields(form)) return;
   const data = new FormData(form);
   const values = Object.fromEntries(KEYS.map(key => [key, data.get(key)?.trim() ? Number(data.get(key)) : null]));
   await saveMeasurement(values, "manual");
@@ -1918,6 +1944,8 @@ function bindEvents() {
   $$("[data-measure-mode]").forEach(button => button.addEventListener("click", () => setMeasureMode(button.dataset.measureMode)));
   $("#measurement-dialog").addEventListener("close", stopStreams);
   $("#measurement-form").addEventListener("submit", submitManual);
+  // A message about the old input must not stay once the user changes it.
+  $("#measurement-form").addEventListener("input", event => { errorAt("#measurement-error"); if (event.target.name in FIELD_NAMES) fieldHint(event.target); });
   $("#connect-ble").addEventListener("click", connectBle);
   $("#simulate-ble").addEventListener("click", startSimulation);
   $("#disconnect-device").addEventListener("click", stopStreams);

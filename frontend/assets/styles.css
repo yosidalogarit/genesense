@@ -789,3 +789,7 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
 .profile-genetics-top { margin: 0 0 24px; }
 .back-to-profile { display: none; }
 @media (max-width: 760px) { .back-to-profile { display: inline-flex; min-height: 44px; margin-bottom: 4px; } }
+/* Amber hint under a measuring field whose value is outside the usual range. */
+.field-hint { display: block; margin-top: 4px; color: var(--amber); font-weight: 600; font-size: .889rem; }
+.field-hint::before { content: "▲ "; }
+#measurement-form input[aria-invalid] { border-color: var(--amber); }
