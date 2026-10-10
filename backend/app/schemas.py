@@ -142,6 +142,8 @@ class AccountProfile(BaseModel):
     paternal_notes: str = Field(default="", max_length=2000)
     maternal_notes: str = Field(default="", max_length=2000)
     ai_consent: bool = False
+    # Medication data stays private unless the patient explicitly enables caregiver access.
+    share_medications: bool = False
     health_consent: Literal[True]
 
     @model_validator(mode="after")
@@ -159,11 +161,21 @@ class MeasurementCreate(BaseModel):
     vitals: VitalSample
     samples: list[VitalSample] = Field(default_factory=list, max_length=120)
     source: MeasurementSource = "manual"
+    client_id: str | None = Field(default=None, min_length=36, max_length=36, pattern=r"^[0-9a-fA-F-]{36}$")
     # The date printed on a scanned document. Only "document" readings carry one; every other reading is dated now.
     measured_on: date | None = None
 
     @model_validator(mode="after")
     def require_measurement(self):
+        if self.client_id and self.source != "manual":
+            raise ValueError("Chỉ số đang chờ đồng bộ phải được nhập thủ công.")
+        if self.vitals.timestamp is not None:
+            if self.vitals.timestamp.tzinfo is None:
+                raise ValueError("Thời gian ghi nhận cần có múi giờ.")
+            now = datetime.now(timezone.utc)
+            measured_at = self.vitals.timestamp.astimezone(timezone.utc)
+            if measured_at > now + timedelta(minutes=5) or measured_at < now - timedelta(days=90):
+                raise ValueError("Thời gian ghi nhận không hợp lệ.")
         if self.measured_on is not None:
             if self.source != "document":
                 raise ValueError("Chỉ số từ giấy tờ mới được ghi ngày khác hôm nay.")
@@ -243,6 +255,31 @@ class MedicationResult(MedicationFields):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+
+
+class MedicationIntakeUpdate(BaseModel):
+    scheduled_on: date
+    taken: bool
+
+
+class MedicationIntakeResult(BaseModel):
+    medication_id: str
+    scheduled_on: date
+    slot: Literal["morning", "noon", "afternoon", "evening"]
+    taken: bool = True
+    taken_at: datetime | None = None
+
+
+class BloodPressureAverage(BaseModel):
+    count: int
+    systolic: float | None
+    diastolic: float | None
+
+
+class WeeklyBloodPressureSummary(BaseModel):
+    days: int = 7
+    morning: BloodPressureAverage
+    evening: BloodPressureAverage
 
 
 class DocumentVitals(BaseModel):

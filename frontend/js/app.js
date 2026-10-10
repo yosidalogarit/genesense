@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { HealthBleClient, VitalSimulator } from "./ble.js";
 import { TrendChart } from "./chart.js";
-import { hydrateIcons } from "./icons.js";
+import { hydrateIcons, icon } from "./icons.js";
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -17,10 +17,10 @@ const MEMBERS = [
   { id: "maternal-grandmother", label: "Bà ngoại", relation: "grandmother", side: "maternal" },
 ];
 const METRICS = [
-  { key: "systolic", label: "Huyết áp", unit: "mmHg" },
-  { key: "heart_rate", label: "Nhịp tim", unit: "lần/phút" },
-  { key: "spo2", label: "Oxy trong máu (SpO₂)", unit: "%" },
-  { key: "glucose", label: "Đường huyết", unit: "mg/dL" },
+  { key: "systolic", label: "Huyết áp", unit: "mmHg", icon: "pressure" },
+  { key: "heart_rate", label: "Nhịp tim", unit: "lần/phút", icon: "heart" },
+  { key: "spo2", label: "Oxy trong máu (SpO₂)", unit: "%", icon: "drop" },
+  { key: "glucose", label: "Đường huyết", unit: "mg/dL", icon: "drop" },
 ];
 const KEYS = ["heart_rate", "systolic", "diastolic", "spo2", "glucose"];
 const LEVELS = { safe: "An toàn", attention: "Cần chú ý", alert: "Nên đi khám sớm", emergency: "Nguy hiểm", watch: "Cần theo dõi" };
@@ -42,18 +42,127 @@ const TRENDS = {
   glucose: { unit: "mg/dL", band: [70, 180], min: 50, max: 220, series: [["glucose", "Đường huyết", "#0b57a4"]] },
 };
 const trendCharts = {};
+const revealedPanels = new Set();
+const panelRevealObserver = "IntersectionObserver" in window ? new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    panelRevealObserver.unobserve(entry.target);
+    const finish = event => {
+      if (event.target !== entry.target || event.animationName !== "panel-reveal") return;
+      entry.target.classList.remove("reveal-once");
+      entry.target.removeEventListener("animationend", finish);
+      entry.target.removeEventListener("animationcancel", finish);
+    };
+    entry.target.addEventListener("animationend", finish);
+    entry.target.addEventListener("animationcancel", finish);
+    entry.target.classList.remove("reveal-pending");
+    entry.target.classList.add("reveal-once");
+    revealedPanels.add(entry.target.dataset.revealKey);
+  }
+}, { threshold: 0.12, rootMargin: "0px 0px -80px 0px" }) : null;
+function revealPanelOnce(element, key) {
+  if (!panelRevealObserver || revealedPanels.has(key) || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  element.dataset.revealKey = key;
+  element.classList.add("reveal-pending");
+  panelRevealObserver.observe(element);
+}
 const isEmergency = result => Boolean(result?.alerts?.some(a => a.severity === "alert"));
 const levelOf = result => isEmergency(result) ? "emergency" : result.risk_level;
 const isReal = record => (record.vitals?.source || "manual") !== "simulation";
 const DOCUMENT_TYPES = { lab_result: "Kết quả xét nghiệm", prescription: "Đơn thuốc", discharge_note: "Giấy ra viện", imaging_report: "Kết quả chẩn đoán hình ảnh", vaccination: "Tiêm chủng", other: "Tài liệu sức khỏe" };
 const FLAG_NAMES = { normal: "Trong khoảng tham chiếu", high: "Cao", low: "Thấp", abnormal: "Cần xem lại", unknown: "Chưa rõ" };
-const state = { viewing: null, own: null, care: { patients: [], caregivers: [] }, user: null, health: null, records: [], result: null, risk: null, step: 0, editing: false, rating: 0,
-  medicalRecords: [], medications: [], recordsTab: null, editingMedicine: null, pendingMedical: null, documentAiEnabled: false, aiProvider: "AI", previewUrl: null,
+const state = { viewing: null, viewingMedications: null, own: null, care: { patients: [], caregivers: [] }, user: null, health: null, records: [], result: null, risk: null, weeklyBP: null, step: 0, editing: false, rating: 0,
+  medicalRecords: [], medications: [], medicationIntakes: null, pendingAssessments: [], recordsTab: null, editingMedicine: null, pendingMedical: null, documentAiEnabled: false, aiProvider: "AI", previewUrl: null, uploadFile: null,
   deviceSource: null, deviceValues: {}, deviceTimes: {}, samples: [], deviceEpoch: 0, authEpoch: 0, busy: false, view: "dashboard" };
 let ble = null;
 let simulator = null;
 let freshnessTimer = null;
+let pendingSync = false;
+let printingMedicine = false;
 const accountChannel = "BroadcastChannel" in window ? new BroadcastChannel("genesense-account") : null;
+
+function offlineRequest(mode, run) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open("genesense-offline", 1);
+    open.onupgradeneeded = () => {
+      if (!open.result.objectStoreNames.contains("pending-assessments")) open.result.createObjectStore("pending-assessments", { keyPath: "client_id" });
+    };
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      try {
+        const transaction = db.transaction("pending-assessments", mode);
+        const request = run(transaction.objectStore("pending-assessments"));
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => db.close();
+        transaction.onerror = () => { db.close(); reject(transaction.error); };
+      } catch (error) { db.close(); reject(error); }
+    };
+  });
+}
+async function pendingForAccount(userId) {
+  return (await offlineRequest("readonly", store => store.getAll())).filter(item => item.user_id === userId)
+    .sort((a, b) => a.captured_at.localeCompare(b.captured_at));
+}
+async function deletePending(clientId) {
+  await offlineRequest("readwrite", store => store.delete(clientId));
+}
+async function deletePendingForAccount(userId) {
+  const items = await pendingForAccount(userId);
+  await Promise.all(items.map(item => deletePending(item.client_id)));
+}
+function renderSyncStatus() {
+  const status = $("#sync-status");
+  if (!status) return;
+  const count = state.pendingAssessments.length;
+  const offline = !navigator.onLine;
+  status.classList.toggle("hidden", !offline && !count);
+  status.textContent = offline
+    ? (count ? count + " chỉ số đã lưu trên thiết bị, chờ kết nối để đồng bộ." : "Đang mất kết nối. Bạn vẫn có thể nhập chỉ số thủ công.")
+    : count ? count + " chỉ số đang chờ đồng bộ. Chưa có đánh giá nguy cơ cho các chỉ số này." : "";
+}
+async function queueManualReading(body) {
+  const entry = { client_id: body.client_id, user_id: state.user.id, captured_at: body.vitals.timestamp, body };
+  await offlineRequest("readwrite", store => store.put(entry));
+  state.pendingAssessments = await pendingForAccount(state.user.id);
+  renderSyncStatus(); renderHistory();
+  closeDialog($("#measurement-dialog"));
+  $("#measurement-form").reset();
+  toast("Đã lưu trên thiết bị. Ứng dụng sẽ đồng bộ khi có mạng; hiện chưa tính nguy cơ.");
+}
+async function syncPendingAssessments() {
+  if (!state.user || state.viewing || !navigator.onLine || pendingSync) return;
+  pendingSync = true;
+  let synced = 0;
+  try {
+    const userId = state.user.id, epoch = state.authEpoch;
+    const pending = await pendingForAccount(userId);
+    state.pendingAssessments = pending;
+    renderSyncStatus(); renderHistory();
+    for (const item of pending) {
+      if (state.authEpoch !== epoch || state.user?.id !== userId) return;
+      try {
+        await api.assess(item.body);
+        await deletePending(item.client_id);
+        synced++;
+      } catch (error) {
+        if (!error.status) return; // keep it for the next online event; the idempotency key makes retries safe
+        if (error.status === 401) return;
+        item.sync_error = error.message;
+        await offlineRequest("readwrite", store => store.put(item));
+        return;
+      }
+    }
+    state.pendingAssessments = await pendingForAccount(userId);
+    renderSyncStatus(); renderHistory();
+    if (synced) {
+      await refreshRecords();
+      toast(synced === 1 ? "Đã đồng bộ 1 chỉ số." : "Đã đồng bộ " + synced + " chỉ số.");
+    }
+  } catch { /* IndexedDB can be unavailable in private browsing; the rest of the app remains usable. */ }
+  finally { pendingSync = false; }
+}
 
 function toast(text, type = "") {
   const el = document.createElement("div");
@@ -92,6 +201,7 @@ function errorAt(id, text = "") {
   el.classList.toggle("hidden", !text);
 }
 function screen(name) {
+  if (name !== "app") setNavDrawer(false, false);
   ["loading", "login", "onboarding", "app", "report"].forEach(key => $("#" + key + "-screen").classList.toggle("hidden", key !== name));
   if (name !== "app") document.title = "GeneSense - Theo dõi sức khỏe";
   window.scrollTo(0, 0);
@@ -200,6 +310,25 @@ function personalize() {
   const today = new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "numeric", year: "numeric" }).format(new Date());
   $("#today-date").textContent = today.charAt(0).toUpperCase() + today.slice(1);
 }
+function setNavDrawer(open, restoreFocus = true) {
+  const drawer = $("#app-nav-drawer"), scrim = $("#nav-scrim"), toggle = $("#sidebar-toggle");
+  if (!drawer || !scrim || !toggle) return;
+  document.body.classList.toggle("nav-open", open);
+  [".app-site-header", "#demo-banner", "#viewing-banner", "#sync-status", "#main-content", ".mobile-nav"].forEach(selector => {
+    const background = $(selector);
+    if (background) background.toggleAttribute("inert", open);
+  });
+  drawer.classList.toggle("is-open", open);
+  scrim.classList.toggle("is-open", open);
+  drawer.setAttribute("aria-hidden", String(!open));
+  scrim.setAttribute("aria-hidden", String(!open));
+  drawer.toggleAttribute("inert", !open);
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.setAttribute("aria-label", open ? "Đóng bảng điều hướng" : "Mở bảng điều hướng");
+  if (open) (drawer.querySelector(`[data-nav="${state.view}"]`) || drawer).focus({ preventScroll: true });
+  else if (restoreFocus && !$("#app-screen").classList.contains("hidden")) toggle.focus({ preventScroll: true });
+}
+
 function navigate(view) {
   if (!state.user || !state.health) return;
   state.view = ["dashboard", "records", "history", "genetics", "profile"].includes(view) && !(state.viewing && view === "records") ? view : "dashboard";
@@ -288,7 +417,7 @@ function readWizard() {
         conditions: knowledge === "known" ? [...el.querySelectorAll("input:checked")].map(box => box.value) : [] };
     }),
     personal_notes: $("#personal-notes").value.trim(), paternal_notes: $("#paternal-notes").value.trim(), maternal_notes: $("#maternal-notes").value.trim(),
-    ai_consent: $("#ai-consent").checked, health_consent: $("#health-consent").checked,
+    ai_consent: $("#ai-consent").checked, share_medications: Boolean(state.health?.share_medications), health_consent: $("#health-consent").checked,
   };
 }
 async function nextStep(event) {
@@ -334,13 +463,17 @@ function placeRanges(root) {
 }
 function renderMetrics() {
   const values = state.result?.measured_vitals || {};
-  $("#metric-grid").innerHTML = METRICS.map(m => {
+  const grid = $("#metric-grid");
+  grid.querySelectorAll(".reveal-pending").forEach(card => panelRevealObserver?.unobserve(card));
+  grid.innerHTML = METRICS.map(m => {
     const [level, status] = statusOf(m.key, values);
     const measured = values[m.key] != null;
-    const flag = level === "attention" || level === "alert" ? '<span class="reading-flag flag-' + level + '">' + status + "</span>" : "";
-    return '<div class="reading"><span class="reading-name">' + m.label + "</span>" + (measured ? '<span class="reading-value">' + valueOf(m.key, values) + "<small>" + m.unit + "</small></span>" + rangeBar(m.key, values[m.key]) : '<span class="reading-value empty">Chưa đo</span>') + flag + "</div>";
+    const flag = measured ? '<span class="reading-flag tag ' + level + '">' + status + '</span>' : '<span class="reading-placeholder">Chưa có số đo được ghi</span>';
+    return '<div class="reading"><span class="metric-icon">' + icon(m.icon) + '</span><span class="reading-name">' + m.label + '</span>' + (measured ? '<span class="reading-value">' + valueOf(m.key, values) + '<small>' + m.unit + '</small></span>' + rangeBar(m.key, values[m.key]) : '<span class="reading-value empty">Chưa đo</span>') + flag + '</div>';
   }).join("");
-  placeRanges($("#metric-grid"));
+  placeRanges(grid);
+  // Keep emergency values immediately readable; other cards enter only on their first viewport visit.
+  if (!isEmergency(state.result)) [...grid.children].forEach((card, index) => revealPanelOnce(card, "metric-" + METRICS[index].key));
 }
 // Stock photos (Pexels, self-hosted) chosen by the tip's topic; order matters ("thuốc lá" before generic words).
 const TIP_IMAGES = [
@@ -410,6 +543,7 @@ function renderDashboard() {
   const recent = r && !isEmergency(r) ? recentEmergency() : null;
   const level = r ? (recent ? "watch" : levelOf(r)) : "neutral";
   renderEmergency(r);
+  $("#quick-actions").classList.toggle("hidden", level === "emergency");
   const status = $("#risk-status");
   status.className = "status-word " + ({ emergency: "alert", watch: "attention" }[level] || level);
   status.textContent = r ? LEVELS[level] : "Chưa có dữ liệu";
@@ -426,6 +560,17 @@ function renderDashboard() {
   renderTips();
   renderMedicineLink();
 }
+function showHistoryTab(tab) {
+  const charts = tab === "charts";
+  $("#history-charts-panel").classList.toggle("hidden", !charts);
+  $("#history-readings-panel").classList.toggle("hidden", charts);
+  $$("[data-history-tab]").forEach(button => {
+    const active = button.dataset.historyTab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  if (charts) renderTrends();
+}
 // Charts show what the readings table shows: whole numbers, except SpO₂ which keeps one decimal.
 const chartValue = (key, value) => key === "spo2" ? value : Math.round(value);
 function renderTrends() {
@@ -433,8 +578,10 @@ function renderTrends() {
   // Every source shares one chart: typed-in, Bluetooth and sample readings.
   const rows = state.records.slice(0, 30).reverse();
   $("#chart-context").textContent = source ? "Tối đa 30 lần đo gần nhất" : "";
+  $("#chart-help").classList.toggle("hidden", !rows.length);
   for (const [id, spec] of Object.entries(TRENDS)) {
     const card = $('[data-trend="' + id + '"]');
+    revealPanelOnce(card, "trend-" + id);
     const points = rows.filter(row => spec.series.every(([key]) => row.vitals[key] != null));
     card.querySelector(".trend-empty").classList.toggle("hidden", points.length > 0);
     const host = card.querySelector(".trend-chart");
@@ -456,12 +603,16 @@ function pickCurrent(rows) {
 async function refreshRecords() {
   const epoch = state.authEpoch;
   try {
-    const rows = await reader().history();
+    const currentReader = reader();
+    const [rows, weeklyBP] = await Promise.all([
+      currentReader.history(),
+      currentReader.weeklyBp(new Date().getTimezoneOffset()).catch(() => null),
+    ]);
     if (epoch !== state.authEpoch) return;
     const current = pickCurrent(rows);
     const result = current ? await reader().assessment(current.id) : null;
     if (epoch !== state.authEpoch) return;
-    state.records = rows; state.result = result;
+    state.records = rows; state.result = result; state.weeklyBP = weeklyBP;
     renderDashboard(); renderHistory();
   } catch (error) {
     if (epoch !== state.authEpoch) return;
@@ -478,7 +629,27 @@ function recordLevel(record) {
   const v = record.vitals || {};
   return METRICS.some(m => statusOf(m.key, v)[0] === "alert") ? "emergency" : record.risk_level;
 }
+function renderPendingReadings() {
+  const panel = $("#pending-readings"), pending = state.pendingAssessments;
+  panel.classList.toggle("hidden", !pending.length);
+  if (!pending.length) { panel.innerHTML = ""; return; }
+  panel.innerHTML = '<h2 id="pending-readings-title">Chờ đồng bộ (' + pending.length + ")</h2><p class=\"note\">Các chỉ số này đang lưu trên thiết bị, chưa được máy chủ tính nguy cơ.</p><ul class=\"pending-reading-list\">" +
+    pending.map(item => {
+      const values = METRICS.filter(metric => item.body.vitals[metric.key] != null)
+        .map(metric => esc(metric.label + " " + withUnit(valueOf(metric.key, item.body.vitals), metric.unit))).join(" · ");
+      return '<li><strong>' + esc(date(item.captured_at)) + '</strong><span>' + values + '</span><span class="tag">Chưa đồng bộ</span>' +
+        (item.sync_error ? '<span class="note">Chưa gửi được. Sẽ thử lại khi có mạng.</span>' : "") + "</li>";
+    }).join("") + "</ul>";
+}
+function renderWeeklyBloodPressure() {
+  const panel = $("#weekly-bp-summary"), summary = state.weeklyBP;
+  panel.innerHTML = '<h3>Trung bình huyết áp 7 ngày</h3><p class="note">Phân nhóm theo giờ ghi nhận; chỉ để xem xu hướng.</p>' +
+    '<div class="weekly-bp-grid">' + [["Sáng · 05–11:59", summary?.morning], ["Tối · 17–23:59", summary?.evening]].map(([label, group]) =>
+      '<div class="weekly-bp-card"><strong>' + label + '</strong><b>' + (group?.count ? esc(num(group.systolic) + "/" + num(group.diastolic) + " mmHg") : "Chưa có số đo") + '</b><span class="note">' + (group?.count ? group.count + " lần đo" : "Trong khung giờ này") + "</span></div>").join("") + "</div>";
+}
 function renderHistory() {
+  renderPendingReadings();
+  renderWeeklyBloodPressure();
   const filter = $("#history-filter").value;
   const records = state.records.filter(row => filter === "all" || (filter === "simulation" ? !isReal(row) : isReal(row)));
   if (!records.length) {
@@ -531,7 +702,10 @@ function familyNode(h, member, extraClass = "") {
   const known = saved?.knowledge === "known" && saved.conditions?.length;
   const kind = known ? "known" : saved?.knowledge === "none" ? "none" : "unknown";
   const text = known ? (saved.affected_count > 1 ? saved.affected_count + " người: " : "") + saved.conditions.map(conditionName).join(", ") : kind === "none" ? "Không có bệnh đã biết" : "Chưa rõ";
-  return '<div class="ft-node ' + kind + " " + extraClass + '"><span class="ft-rel">' + member.label + '</span><span class="ft-state">' + esc(text) + "</span></div>";
+  const content = '<span class="ft-rel">' + member.label + '</span><span class="ft-state">' + esc(text) + "</span>";
+  return state.viewing
+    ? '<div class="ft-node ' + kind + " " + extraClass + '">' + content + "</div>"
+    : '<button type="button" class="ft-node ft-edit-node own-only ' + kind + " " + extraClass + '" data-edit-member="' + member.id + '" aria-label="Sửa tiền sử của ' + esc(member.label) + '">' + content + "</button>";
 }
 function familySummary(h) {
   const conditionName = key => CONDITIONS.find(([id]) => id === key)?.[1];
@@ -543,6 +717,25 @@ function familySummary(h) {
   parts.push(known.length ? known.reduce((sum, row) => sum + (row.affected_count || 1), 0) + " người thân có bệnh đã biết: " + Object.entries(tally).map(([key, count]) => conditionName(key) + " (" + count + " người)").join(", ") + "." : "Chưa khai báo người thân nào có bệnh đã biết.");
   if (unknown) parts.push(unknown + " người chưa rõ tiền sử. Hỏi thêm gia đình để hồ sơ đầy đủ hơn.");
   return parts.map(text => "<p>" + esc(text) + "</p>").join("");
+}
+function sharedMedicationPanel() {
+  const data = state.viewingMedications;
+  if (!data) return '<article class="panel"><h2>Thuốc hôm nay</h2><p class="note">Đang tải thông tin được chia sẻ…</p></article>';
+  if (!data.shared) return '<article class="panel"><h2>Thuốc hôm nay</h2><p class="note">Lịch thuốc chưa được chia sẻ với người thân.</p></article>';
+  const medications = data.medications || [];
+  if (!medications.length) return '<article class="panel"><h2>Thuốc hôm nay</h2><p class="note">Chưa có thuốc trong lịch hôm nay.</p></article>';
+  const taken = new Set((data.intakes || []).map(row => row.medication_id + ":" + row.slot));
+  const blocks = SLOTS.map(([slot, label]) => {
+    const rows = medications.filter(item => item[slot]);
+    if (!rows.length) return "";
+    return '<section class="shared-medicine-slot"><h3>' + label + "</h3><ul>" + rows.map(item =>
+      '<li><strong>' + esc(item.name + (item.strength ? " " + item.strength : "")) + '</strong><span>' + esc([item.amount, item.meal === "before" ? "Trước ăn" : item.meal === "after" ? "Sau ăn" : ""].filter(Boolean).join(" · ") || "Theo đơn") + '</span><span class="tag">' +
+      (taken.has(item.id + ":" + slot) ? "Đã ghi nhận đã uống" : "Chưa ghi nhận") + "</span></li>").join("") + "</ul></section>";
+  }).join("");
+  const asNeeded = medications.filter(item => !SLOTS.some(([slot]) => item[slot]));
+  const needed = asNeeded.length ? '<section class="shared-medicine-slot"><h3>Khi cần</h3><ul>' + asNeeded.map(item =>
+    '<li><strong>' + esc(item.name + (item.strength ? " " + item.strength : "")) + '</strong><span>' + esc(item.amount || "Theo đơn") + "</span></li>").join("") + "</ul></section>" : "";
+  return '<article class="panel shared-medicine-panel"><h2>Thuốc hôm nay</h2><p class="note">Chỉ xem. Trạng thái uống do chủ hồ sơ ghi nhận.</p>' + blocks + needed + "</article>";
 }
 function renderProfile() {
   const h = state.health, p = h.profile;
@@ -562,7 +755,9 @@ function renderProfile() {
       "<div><dt>Bệnh đã chẩn đoán</dt><dd>" + esc(conditions.join(", ") || "Không khai báo") + "</dd></div><div><dt>Hút thuốc</dt><dd>" + (p.smoker ? "Có" : "Không") + "</dd></div>" +
       (state.viewing ? "" : "<div><dt>Dùng AI giải thích kết quả</dt><dd>" + (h.ai_consent ? "Đã cho phép" : "Chưa cho phép") + "</dd></div>") +
     "</dl>" + (h.personal_notes ? "<h3>Ghi chú</h3><p>" + esc(h.personal_notes) + "</p>" : "") + "</article>" +
-    '<article class="panel"><h2>Tiền sử bệnh trong gia đình</h2><div class="ft-summary">' + familySummary(h) + '</div><button class="link-button" data-nav="genetics">Xem sơ đồ gia đình và nguy cơ theo từng bệnh</button></article>';
+    '<article class="panel"><h2>Tiền sử bệnh trong gia đình</h2><div class="ft-summary">' + familySummary(h) + '</div><button class="profile-genetics-link" data-nav="genetics"><span class="profile-genetics-icon" data-icon="family"></span><span class="profile-genetics-copy"><strong>Di truyền &amp; tiền sử gia đình</strong><small>Xem sơ đồ gia đình và nguy cơ theo từng bệnh</small></span><span class="profile-genetics-arrow" data-icon="chevron"></span></button></article>' +
+    (state.viewing ? sharedMedicationPanel() : "");
+  hydrateIcons($("#profile-content"));
   if (!state.viewing) renderAvatar();
 }
 
@@ -741,7 +936,8 @@ function openReport() { screen("report"); document.title = "Phiếu tổng hợp
 // Family sharing. While viewing a relative, the same screens render that person's data read-only:
 // state is swapped, writes are hidden (.own-only) and guarded, and reads go through the care endpoints.
 const reader = () => state.viewing
-  ? { history: () => api.careHistory(state.viewing.id), assessment: id => api.careAssessment(state.viewing.id, id) }
+  ? { history: () => api.careHistory(state.viewing.id), assessment: id => api.careAssessment(state.viewing.id, id),
+      weeklyBp: timezoneOffset => api.careWeeklyBp(state.viewing.id, timezoneOffset) }
   : api;
 async function refreshCare() {
   const epoch = state.authEpoch;
@@ -774,13 +970,27 @@ function renderCare() {
   $("#care-patients").innerHTML = patients.map(patientRow).join("");
   $("#care-panel").innerHTML =
     "<h2>Chia sẻ với người thân</h2>" +
-    '<p class="note">Người thân có mã sẽ xem được tình trạng, số đo, biểu đồ, thông tin cá nhân và tiền sử gia đình của bạn. Họ không sửa được gì và không xem được giấy tờ. Bạn có thể thu hồi bất cứ lúc nào.</p>' +
+    '<p class="note">Người thân đã liên kết chỉ xem được hồ sơ và số đo. Lịch thuốc riêng tư cho đến khi bạn cho phép bên dưới. Bạn có thể thu hồi quyền xem bất cứ lúc nào.</p>' +
+    '<label class="check-label care-medication-sharing"><input id="care-share-medications" type="checkbox"' + (state.health?.share_medications ? " checked" : "") + '><span>Cho phép người thân đã liên kết xem lịch thuốc và trạng thái đã uống.<small>Không chia sẻ giấy tờ hoặc ảnh đơn thuốc.</small></span></label>' +
     '<button class="btn outline" id="care-create">Tạo mã chia sẻ</button><div id="care-code-box"></div>' +
     "<h3>Người đang xem được hồ sơ của bạn</h3>" +
     (caregivers.length ? '<div class="care-rows">' + caregivers.map(c => '<div class="care-row"><div class="care-row-main"><strong>' + esc(c.display_name) + '</strong><span class="note">Từ ' + esc(date(c.created_at, false)) + '</span></div><button class="delete-record" data-remove-link="' + esc(c.link_id) + '" data-remove-kind="caregiver">Thu hồi</button></div>').join("") + "</div>" : '<p class="note">Chưa chia sẻ với ai.</p>') +
     "<h3>Theo dõi người thân</h3>" +
     '<form id="care-form" class="care-form"><label>Nhập mã người thân gửi cho bạn<input id="care-code-input" autocomplete="off" autocapitalize="characters" maxlength="16" required></label><button class="btn primary" type="submit">Liên kết</button></form><p id="care-error" class="inline-message error hidden" role="alert"></p>' +
     (patients.length ? '<div class="care-rows">' + patients.map(patientRow).join("") + "</div>" : "");
+}
+async function setMedicationSharing(toggle) {
+  const previous = Boolean(state.health?.share_medications), requested = toggle.checked;
+  toggle.disabled = true;
+  try {
+    const data = await api.saveProfile({ ...structuredClone(state.health), share_medications: requested });
+    state.user = data.user; state.health = data.health;
+    await refreshCare();
+    toast(requested ? "Đã cho phép chia sẻ lịch thuốc với người thân đã liên kết." : "Đã tắt chia sẻ lịch thuốc.");
+  } catch (error) {
+    toggle.checked = previous;
+    toast(error.message, "error");
+  } finally { toggle.disabled = false; }
 }
 async function createCareCode() {
   try {
@@ -810,20 +1020,23 @@ async function viewPatient(patientId) {
   if (!patient || state.viewing) return;
   try {
     const shared = await api.careProfile(patientId);
-    state.own = { health: state.health, records: state.records, result: state.result, risk: state.risk };
+    state.own = { health: state.health, records: state.records, result: state.result, risk: state.risk, weeklyBP: state.weeklyBP,
+      viewingMedications: state.viewingMedications };
     state.viewing = { id: patientId, name: shared.display_name };
-    state.health = shared.health; state.records = []; state.result = null; state.risk = null;
+    state.health = shared.health; state.records = []; state.result = null; state.risk = null; state.weeklyBP = null; state.viewingMedications = null;
     document.body.classList.add("viewing");
     $("#viewing-text").textContent = "Bạn đang xem hồ sơ của " + shared.display_name + ". Chỉ xem, không sửa được.";
     $("#viewing-banner").classList.remove("hidden");
     personalize();
-    await Promise.all([refreshRecords(), refreshRisk()]);
+    const medicationPromise = api.careMedications(patientId, localDay()).catch(() => ({ shared: false, medications: [], intakes: [] }));
+    await Promise.all([refreshRecords(), refreshRisk(), medicationPromise.then(value => { state.viewingMedications = value; })]);
+    renderProfile();
     navigate("dashboard");
   } catch (error) { toast(error.message, "error"); }
 }
 async function exitViewing() {
   if (!state.viewing) return;
-  Object.assign(state, state.own, { viewing: null, own: null });
+  Object.assign(state, state.own, { viewing: null, viewingMedications: null, own: null });
   document.body.classList.remove("viewing");
   $("#viewing-banner").classList.add("hidden");
   personalize(); renderDashboard(); renderHistory();
@@ -975,11 +1188,21 @@ function renderMedicines() {
   const active = state.medications.filter(m => medicineActive(m));
   const hour = new Date().getHours(), now = hour < 11 ? "morning" : hour < 14 ? "noon" : hour < 18 ? "afternoon" : "evening";
   const title = m => esc(m.name + (m.strength ? " " + m.strength : ""));
-  const item = m => "<li><strong>" + title(m) + "</strong>" + (medicineHow(m) ? "<span>" + esc(medicineHow(m)) + "</span>" : "") + (m.note ? '<span class="note">' + esc(m.note) + "</span>" : "") + "</li>";
-  const block = (label, rows, current) => rows.length ? '<article class="panel slot"><h3>' + label + (current ? ' <span class="tag">Bây giờ</span>' : "") + "</h3><ul>" + rows.map(item).join("") + "</ul></article>" : "";
-  const blocks = SLOTS.map(([key, label]) => block(label, active.filter(m => m[key]), key === now)).join("") + block("Khi cần", active.filter(m => !SLOTS.some(([key]) => m[key])));
+  const taken = new Set((state.medicationIntakes || []).map(row => row.medication_id + ":" + row.slot));
+  const item = (m, slot = null) => {
+    const checked = slot && taken.has(m.id + ":" + slot);
+    const intake = slot ? '<label class="medicine-intake"><input type="checkbox" data-medication-intake="' + esc(m.id) + '" data-intake-slot="' + slot + '" aria-label="' + esc("Đã uống " + m.name + " buổi " + SLOTS.find(([key]) => key === slot)[1].toLowerCase()) + '"' + (checked ? " checked" : "") + (state.medicationIntakes === null ? " disabled" : "") + '><span>' + (checked ? "Đã ghi nhận" : "Đã uống") + "</span></label>" : "";
+    return '<li class="medicine-schedule-row"><div><strong>' + title(m) + "</strong>" + (medicineHow(m) ? "<span>" + esc(medicineHow(m)) + "</span>" : "") + (m.note ? '<span class="note">' + esc(m.note) + "</span>" : "") + "</div>" + intake + "</li>";
+  };
+  const block = (label, rows, current, slot = null) => rows.length ? '<article class="panel slot"><h3>' + label + (current ? ' <span class="tag">Bây giờ</span>' : "") + "</h3><ul>" + rows.map(m => item(m, slot)).join("") + "</ul></article>" : "";
+  const blocks = SLOTS.map(([key, label]) => block(label, active.filter(m => m[key]), key === now, key)).join("") + block("Khi cần", active.filter(m => !SLOTS.some(([key]) => m[key])));
   $("#medicine-today").innerHTML = blocks ? '<div class="slot-grid">' + blocks + '</div><p class="note">Nếu khác đơn giấy, hãy làm theo đơn và lời bác sĩ.</p>'
     : '<article class="panel empty-state"><h3>Hôm nay không có thuốc trong lịch</h3><p class="note">Chụp đơn thuốc hoặc bấm Thêm thuốc.</p></article>';
+  if (active.some(m => SLOTS.some(([key]) => m[key])) && state.medicationIntakes === null) {
+    $("#medicine-today").insertAdjacentHTML("beforeend", '<p class="note" role="status">Chưa tải được trạng thái uống thuốc. Kết nối mạng rồi thử làm mới.</p>');
+  } else if (blocks) {
+    $("#medicine-today").insertAdjacentHTML("beforeend", '<p class="note">Chỉ ghi nhận sau khi bạn đã uống; GeneSense không nhắc giờ hay thay đổi hướng dẫn trên đơn.</p>');
+  }
   const day = localDay();
   const tag = m => m.start_date > day ? '<span class="tag">Chưa bắt đầu</span>' : medicineActive(m, day) ? "" : '<span class="tag">Đã hết đợt</span>';
   $("#medicine-all").classList.toggle("hidden", !state.medications.length);
@@ -991,12 +1214,50 @@ function renderMedicines() {
 }
 async function refreshMedications() {
   const epoch = state.authEpoch;
+  const day = localDay();
   try {
-    const rows = await api.medications();
+    const [rows, intakes] = await Promise.all([api.medications(), api.medicationIntakes(day)]);
     if (epoch !== state.authEpoch) return;
-    state.medications = rows;
+    state.medications = rows; state.medicationIntakes = intakes;
   } catch (error) { if (epoch !== state.authEpoch) return; toast(error.message, "error"); }
   renderMedicines();
+}
+async function setMedicationIntake(input) {
+  const medicationId = input.dataset.medicationIntake, slot = input.dataset.intakeSlot, taken = input.checked;
+  input.disabled = true;
+  try {
+    const result = await api.setMedicationIntake(medicationId, slot, { scheduled_on: localDay(), taken });
+    state.medicationIntakes = (state.medicationIntakes || []).filter(row => row.medication_id !== medicationId || row.slot !== slot);
+    if (result.taken) state.medicationIntakes.push(result);
+    renderMedicines();
+    toast(taken ? "Đã ghi nhận bạn đã uống thuốc." : "Đã bỏ ghi nhận.");
+  } catch (error) {
+    input.checked = !taken;
+    input.disabled = false;
+    toast(error.message, "error");
+  }
+}
+function printMedicineSchedule() {
+  if (state.viewing) return;
+  const day = localDay(), active = state.medications.filter(m => medicineActive(m, day));
+  const taken = new Set((state.medicationIntakes || []).map(row => row.medication_id + ":" + row.slot));
+  const groups = SLOTS.map(([slot, label]) => {
+    const rows = active.filter(m => m[slot]);
+    return rows.length ? '<section class="medicine-print-group"><h2>' + label + '</h2><ul>' + rows.map(m =>
+      '<li><span><strong>' + esc(m.name + (m.strength ? " " + m.strength : "")) + '</strong><small>' + esc([m.amount, MEALS[m.meal], m.note].filter(Boolean).join(" · ") || "Theo đơn") + '</small></span><span class="medicine-print-status">' + (taken.has(m.id + ":" + slot) ? "✓ Đã ghi nhận" : "□ Chưa ghi nhận") + "</span></li>").join("") + "</ul></section>" : "";
+  }).join("");
+  const asNeeded = active.filter(m => !SLOTS.some(([slot]) => m[slot]));
+  const needed = asNeeded.length ? '<section class="medicine-print-group"><h2>Khi cần</h2><ul>' + asNeeded.map(m =>
+    '<li><span><strong>' + esc(m.name + (m.strength ? " " + m.strength : "")) + '</strong><small>' + esc([m.amount, m.note].filter(Boolean).join(" · ") || "Theo đơn") + "</small></span></li>").join("") + "</ul></section>" : "";
+  const name = state.health?.display_name || state.user?.display_name || "";
+  $("#medicine-print-sheet").innerHTML = '<header class="medicine-print-head"><h1>Lịch dùng thuốc</h1><p><strong>Hồ sơ:</strong> ' + esc(name) + ' <span>·</span> <strong>Ngày:</strong> ' + esc(date(day + "T12:00:00", false)) + '</p><p>Đối chiếu với đơn gốc và hướng dẫn của bác sĩ. Bản in này không thay thế đơn thuốc.</p></header>' +
+    (groups || needed ? '<div class="medicine-print-grid">' + groups + needed + '</div>' : '<p>Hôm nay không có thuốc trong lịch.</p>');
+  printingMedicine = true;
+  document.body.classList.add("print-medicine");
+  const finish = () => { printingMedicine = false; document.body.classList.remove("print-medicine"); };
+  window.addEventListener("afterprint", finish, { once: true });
+  window.print();
+  setTimeout(() => { if (printingMedicine) finish(); }, 30000);
 }
 function openMedicine(id) {
   if (state.viewing) return;
@@ -1108,13 +1369,16 @@ function resetMedicalUpload() {
   if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
   state.previewUrl = null;
   state.pendingMedical = null; state.pendingScan = null;
+  state.uploadFile = null;
   $("#document-apply").innerHTML = "";
+  $("#medical-camera-file").value = "";
   $("#medical-document-file").value = "";
   $("#document-ai-consent").checked = false;
   $("#confirm-medical-record").checked = false;
   $("#document-preview").removeAttribute("src");
   $("#document-preview").classList.add("hidden");
-  $(".document-drop").classList.remove("has-file");
+  $("#document-drop").classList.remove("has-file");
+  $("#document-photo-status").textContent = "Chưa chọn ảnh";
   $("#upload-stage").classList.remove("hidden");
   $("#review-stage").classList.add("hidden");
   $("#analyze-document").disabled = true;
@@ -1124,8 +1388,7 @@ function resetMedicalUpload() {
 }
 
 function updateDocumentButton() {
-  const file = $("#medical-document-file").files[0];
-  $("#analyze-document").disabled = !state.documentAiEnabled || !file || !$("#document-ai-consent").checked || state.busy;
+  $("#analyze-document").disabled = !state.documentAiEnabled || !state.uploadFile || !$("#document-ai-consent").checked || state.busy;
 }
 
 function openMedicalUpload() {
@@ -1134,37 +1397,41 @@ function openMedicalUpload() {
   $("#medical-upload-dialog").showModal();
 }
 
-function selectMedicalImage() {
-  const file = $("#medical-document-file").files[0];
+function selectMedicalImage(event) {
+  const input = event.currentTarget;
+  const file = input.files[0];
+  if (!file) { updateDocumentButton(); return; }
+  state.uploadFile = file;
+  for (const selector of ["#medical-camera-file", "#medical-document-file"]) if (selector !== "#" + input.id) $(selector).value = "";
   errorAt("#document-error");
   if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
   state.previewUrl = null;
   $("#document-preview").classList.add("hidden");
-  $(".document-drop").classList.remove("has-file");
-  if (!file) { updateDocumentButton(); return; }
+  $("#document-drop").classList.remove("has-file");
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
     errorAt("#document-error", "Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP.");
-    $("#medical-document-file").value = "";
+    input.value = ""; state.uploadFile = null;
   } else if (file.size > 8 * 1024 * 1024) {
     errorAt("#document-error", "Ảnh vượt quá giới hạn 8 MB.");
-    $("#medical-document-file").value = "";
+    input.value = ""; state.uploadFile = null;
   } else {
     state.previewUrl = URL.createObjectURL(file);
     $("#document-preview").src = state.previewUrl;
     $("#document-preview").classList.remove("hidden");
-    $(".document-drop").classList.add("has-file");
+    $("#document-drop").classList.add("has-file");
+    $("#document-photo-status").textContent = "Ảnh đã sẵn sàng để kiểm tra";
   }
   updateDocumentButton();
 }
 
 async function analyzeMedicalDocument() {
-  const file = $("#medical-document-file").files[0];
+  const file = state.uploadFile;
   if (!file || !$("#document-ai-consent").checked || state.busy) return;
   state.busy = true;
   const button = $("#analyze-document");
   const original = button.innerHTML;
   button.disabled = true;
-  button.textContent = "Đang đọc ảnh…";
+  button.textContent = "AI đang đọc và tổng hợp…";
   errorAt("#document-error");
   const epoch = state.authEpoch;
   try {
@@ -1343,6 +1610,9 @@ async function saveMeasurement(values, source, samples = []) {
   if (state.busy) return;
   const problem = vitalsProblem(values);
   if (problem) { errorAt("#measurement-error", problem); return; }
+  const userId = state.user.id;
+  const body = { vitals: { ...values, timestamp: new Date().toISOString() }, source, samples };
+  if (source === "manual") body.client_id = crypto.randomUUID();
   state.busy = true;
   const epoch = state.authEpoch;
   const button = source === "manual" ? $('#measurement-form button[type="submit"]') : $("#save-device");
@@ -1350,7 +1620,7 @@ async function saveMeasurement(values, source, samples = []) {
   button.disabled = true; button.textContent = "Đang lưu…";
   errorAt("#measurement-error");
   try {
-    const r = await api.assess({ vitals: { ...values, timestamp: new Date().toISOString() }, source, samples });
+    const r = await api.assess(body);
     if (epoch !== state.authEpoch) return;
     const record = { id: r.id, created_at: r.created_at, risk_level: r.risk_level, overall_score: r.scores.overall, vitals: { ...values, source } };
     state.records = [record, ...state.records].slice(0, 100);
@@ -1368,7 +1638,12 @@ async function saveMeasurement(values, source, samples = []) {
       const focusTitle = () => $("#emergency-title").focus();
       if (dialog.open) dialog.addEventListener("close", focusTitle, { once: true }); else focusTitle();
     } else toast("Đã lưu chỉ số.");
-  } catch (error) { errorAt("#measurement-error", error.message); }
+  } catch (error) {
+    if (source === "manual" && epoch === state.authEpoch && state.user?.id === userId && (!navigator.onLine || !error.status)) {
+      try { await queueManualReading(body); }
+      catch { errorAt("#measurement-error", "Không lưu được trên thiết bị này. Hãy giữ lại số đo rồi thử lại."); }
+    } else errorAt("#measurement-error", error.message);
+  }
   finally { state.busy = false; button.disabled = false; button.innerHTML = original; if (source !== "manual") renderDevice(); }
 }
 async function submitManual(event) {
@@ -1388,7 +1663,8 @@ function clearAccount() {
   setAvatar(null);
   if (state.scanUrl) URL.revokeObjectURL(state.scanUrl);
   state.scanUrl = null; $("#scan-image").removeAttribute("src"); $("#scan-save").removeAttribute("href");
-  state.user = null; state.health = null; state.records = []; state.result = null; state.risk = null; state.riskFailed = false; state.medicalRecords = []; state.medications = []; state.recordsTab = null; state.historyAll = false; state.editing = false; state.rating = 0;
+  state.user = null; state.health = null; state.records = []; state.result = null; state.risk = null; state.weeklyBP = null; state.riskFailed = false; state.medicalRecords = []; state.medications = []; state.medicationIntakes = null; state.pendingAssessments = []; state.viewingMedications = null; state.recordsTab = null; state.historyAll = false; state.editing = false; state.rating = 0;
+  renderSyncStatus();
   resetMedicalUpload();
   $("#profile-content").innerHTML = ""; $("#genetics-content").innerHTML = ""; $("#history-list").innerHTML = ""; $("#medical-record-list").innerHTML = ""; $("#result-detail").innerHTML = "";
   $("#onboarding-form").reset(); $("#measurement-form").reset(); $("#feedback-form").reset();
@@ -1405,17 +1681,22 @@ async function signOut() {
     const orphans = state.user?.is_demo ? state.medicalRecords.map(record => record.id) : [];
     await api.logout();
     for (const id of orphans) await scanRequest("readwrite", store => store.delete(id));
+    if (state.user?.is_demo) await deletePendingForAccount(state.user.id);
     clearAccount(); screen("login");
     accountChannel?.postMessage("signed-out");
     window.history.replaceState(null, "", "/");
   } catch (error) { toast(error.message, "error"); }
 }
 // step 1 opens the wizard straight at the family pages; the user returns to the tab they came from.
-function editProfile(step = 0) {
+function editProfile(step = 0, memberId = null) {
   if (state.viewing) return;
   state.editing = true; state.editReturn = state.view; fillWizard(state.health);
   state.step = step; showStep();
   screen("onboarding");
+  if (memberId) requestAnimationFrame(() => {
+    const input = document.getElementById("knowledge-" + memberId);
+    input?.scrollIntoView({ block: "center" }); input?.focus({ preventScroll: true });
+  });
 }
 async function enterAccount(user) {
   state.user = user;
@@ -1423,6 +1704,8 @@ async function enterAccount(user) {
   const data = await api.profile();
   if (epoch !== state.authEpoch) return;
   state.health = data.health; state.user = data.user;
+  state.pendingAssessments = await pendingForAccount(user.id).catch(() => []);
+  renderSyncStatus();
   if (!user.onboarding_completed || !data.health) {
     state.editing = false; fillWizard(); screen("onboarding");
   } else {
@@ -1430,6 +1713,7 @@ async function enterAccount(user) {
     loadAvatar();
     await Promise.all([refreshRecords(), refreshMedicalRecords(), refreshMedications(), refreshCare(), refreshRisk()]);
     navigate(location.hash.slice(1) || "dashboard");
+    void syncPendingAssessments();
   }
 }
 async function boot() {
@@ -1440,8 +1724,10 @@ async function boot() {
     state.documentAiEnabled = Boolean(config.document_ai_enabled);
     state.aiProvider = config.ai_provider || "AI";
     $("#document-ai-provider").textContent = state.aiProvider;
-    $("#upload-record").disabled = !state.documentAiEnabled;
+    $("#upload-record").disabled = false;
     $("#records-ai-off").classList.toggle("hidden", state.documentAiEnabled);
+    $("#document-ai-unavailable").classList.toggle("hidden", state.documentAiEnabled);
+    $(".upload-consent").classList.toggle("hidden", !state.documentAiEnabled);
     $("#google-login").disabled = !config.google_enabled;
     $("#demo-entry").classList.toggle("hidden", !config.demo_enabled);
     const loginError = new URLSearchParams(location.search).get("auth_error");
@@ -1457,7 +1743,42 @@ async function boot() {
   }
 }
 
+// "Hiệu ứng kính mờ" is a choice for this device, so it is kept in this browser only. On by default.
+function applyGlass(on) {
+  document.body.classList.toggle("no-glass", !on);
+  $("#glass-setting").checked = on;
+}
 function bindEvents() {
+  $("#glass-setting").addEventListener("change", event => {
+    applyGlass(event.target.checked);
+    try { localStorage.setItem("genesense-glass", event.target.checked ? "on" : "off"); } catch {}
+  });
+  $("#sidebar-toggle").addEventListener("click", () => setNavDrawer($("#sidebar-toggle").getAttribute("aria-expanded") !== "true"));
+  $("#nav-close").addEventListener("click", () => setNavDrawer(false));
+  $("#nav-scrim").addEventListener("click", () => setNavDrawer(false));
+  document.addEventListener("keydown", event => {
+    const drawer = $("#app-nav-drawer");
+    if (!drawer.classList.contains("is-open")) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setNavDrawer(false);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...drawer.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter(el => el.getAttribute("aria-hidden") !== "true" && el.getClientRects().length > 0);
+    const first = focusable[0], last = focusable.at(-1), active = document.activeElement;
+    if (!first || !last) {
+      event.preventDefault();
+      drawer.focus({ preventScroll: true });
+    } else if (event.shiftKey && (!drawer.contains(active) || active === first)) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!event.shiftKey && (!drawer.contains(active) || active === last)) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  });
   $("#google-login").addEventListener("click", () => { location.assign("/api/auth/google"); });
   $("#demo-login").addEventListener("click", async () => {
     const button = $("#demo-login"); button.disabled = true;
@@ -1507,7 +1828,13 @@ function bindEvents() {
   ["height", "weight"].forEach(id => $("#" + id).addEventListener("input", updateBmi));
   document.addEventListener("click", event => {
     const nav = event.target.closest("[data-nav]");
-    if (nav) navigate(nav.dataset.nav);
+    if (nav) {
+      navigate(nav.dataset.nav);
+      if (nav.closest("#app-nav-drawer")) {
+        setNavDrawer(false, false);
+        $("#main-content").focus({ preventScroll: true });
+      }
+    }
     const close = event.target.closest("[data-close]");
     if (close) closeDialog($("#" + close.dataset.close));
     const record = event.target.closest("[data-record]");
@@ -1519,6 +1846,13 @@ function bindEvents() {
     const tab = event.target.closest("[data-records-tab]");
     if (tab) { state.recordsTab = tab.dataset.recordsTab; renderRecordsTab(); }
     if (event.target.closest("[data-open-medicines]")) { state.recordsTab = "medicines"; navigate("records"); }
+    if (event.target.closest("[data-open-documents]")) { state.recordsTab = "documents"; navigate("records"); }
+    if (event.target.closest("[data-open-report]")) openReport();
+    if (event.target.closest("#medicine-print")) printMedicineSchedule();
+    const historyTab = event.target.closest("[data-history-tab]");
+    if (historyTab) showHistoryTab(historyTab.dataset.historyTab);
+    const historyView = event.target.closest("[data-history-view]");
+    if (historyView) { navigate("history"); showHistoryTab(historyView.dataset.historyView); }
     const editMedicine = event.target.closest("[data-edit-medicine]");
     if (editMedicine) openMedicine(editMedicine.dataset.editMedicine);
 
@@ -1533,7 +1867,9 @@ function bindEvents() {
     if (event.target.closest("#history-add")) openMeasurement();
     if (event.target.closest("#retry-history")) refreshRecords();
     if (event.target.closest("#retry-risk")) refreshRisk();
-    if (event.target.closest("[data-edit-family]")) editProfile(1);
+    const editMember = event.target.closest("[data-edit-member]");
+    if (editMember) editProfile(1, editMember.dataset.editMember);
+    else if (event.target.closest("[data-edit-family]")) editProfile(1);
   });
   $("#edit-profile").addEventListener("click", () => editProfile());
   document.addEventListener("submit", event => { if (event.target.id === "care-form") acceptCareCode(event); });
@@ -1543,11 +1879,18 @@ function bindEvents() {
   $("#upload-record").addEventListener("click", openMedicalUpload);
   $("#add-medicine").addEventListener("click", () => openMedicine());
   $("#medicine-form").addEventListener("submit", saveMedicine);
+  $("#care-panel").addEventListener("change", event => {
+    if (event.target.matches("#care-share-medications")) setMedicationSharing(event.target);
+  });
+  document.addEventListener("change", event => {
+    if (event.target.matches("[data-medication-intake]")) setMedicationIntake(event.target);
+  });
   $("#medicine-form").addEventListener("change", event => {
     const form = event.currentTarget;
     if (event.target.type === "checkbox") keepSlotChoice(event.target, SLOTS.map(([key]) => form.elements[key]), form.elements.as_needed);
   });
   $("#medicine-delete").addEventListener("click", () => deleteMedicine(state.editingMedicine));
+  $("#medical-camera-file").addEventListener("change", selectMedicalImage);
   $("#medical-document-file").addEventListener("change", selectMedicalImage);
   $("#document-ai-consent").addEventListener("change", updateDocumentButton);
   $("#analyze-document").addEventListener("click", analyzeMedicalDocument);
@@ -1601,6 +1944,8 @@ function bindEvents() {
     finally { button.disabled = false; }
   });
   window.addEventListener("session-expired", () => { clearAccount(); screen("login"); errorAt("#login-message", "Phiên đã hết hạn. Hãy đăng nhập lại để tiếp tục."); });
+  window.addEventListener("online", () => { renderSyncStatus(); void syncPendingAssessments(); });
+  window.addEventListener("offline", renderSyncStatus);
   accountChannel?.addEventListener("message", () => { clearAccount(); boot(); });
   // Links like the header logo only change the hash; route on every hash change (also back/forward).
   window.addEventListener("hashchange", () => { if (state.user && state.health) navigate(location.hash.slice(1) || "dashboard"); });
@@ -1608,11 +1953,12 @@ function bindEvents() {
   window.addEventListener("pageshow", event => { if (event.persisted) { clearAccount(); boot(); } });
   document.addEventListener("visibilitychange", async () => {
     if (document.hidden || !state.user) return;
-    try { const me = await api.me(); if (me.id !== state.user?.id) { clearAccount(); await boot(); } }
+    try { const me = await api.me(); if (me.id !== state.user?.id) { clearAccount(); await boot(); } else void syncPendingAssessments(); }
     catch (error) { if (error.status === 401) { clearAccount(); await boot(); } }
   });
 }
 hydrateIcons();
 bindEvents();
+try { applyGlass(localStorage.getItem("genesense-glass") !== "off"); } catch { applyGlass(true); }
 if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
 boot();

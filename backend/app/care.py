@@ -1,7 +1,7 @@
 """Family sharing: a patient invites a relative with a one-time code; the relative gets read-only access."""
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import current_user
 from .database import get_session
-from .models import Assessment, CareCodeFailure, CareInvite, CareLink, User
-from .schemas import AccountProfile, AssessmentHistoryItem, AssessmentResult
+from .models import Assessment, CareCodeFailure, CareInvite, CareLink, Medication, MedicationIntake, User
+from .schemas import AccountProfile, AssessmentHistoryItem, AssessmentResult, BloodPressureAverage, WeeklyBloodPressureSummary
 from .services.risk_engine import risk_overview
 
 router = APIRouter(prefix="/api/care", tags=["care"])
@@ -49,6 +49,35 @@ async def current_vital_score(user_id: str, session: AsyncSession) -> float | No
     rows = await session.execute(select(Assessment.vital_score, Assessment.vitals).where(Assessment.user_id == user_id)
                                  .order_by(Assessment.created_at.desc()).limit(30))
     return next((score for score, vitals in rows if not from_document(vitals)), None)
+
+
+async def weekly_bp_summary(user_id: str, timezone_offset: int, session: AsyncSession) -> WeeklyBloodPressureSummary:
+    """Describe recorded seven-day averages by local clock time; this is not a diagnosis."""
+    since = datetime.now(timezone.utc) - timedelta(days=7)
+    rows = await session.execute(select(Assessment.created_at, Assessment.vitals).where(
+        Assessment.user_id == user_id, Assessment.created_at >= since
+    ).order_by(Assessment.created_at))
+    groups: dict[str, list[tuple[float, float]]] = {"morning": [], "evening": []}
+    for created_at, vitals in rows:
+        if from_document(vitals):
+            continue
+        systolic, diastolic = (vitals or {}).get("systolic"), (vitals or {}).get("diastolic")
+        if systolic is None or diastolic is None:
+            continue
+        aware = created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+        hour = (aware.astimezone(timezone.utc) - timedelta(minutes=timezone_offset)).hour
+        group = "morning" if 5 <= hour < 12 else "evening" if hour >= 17 else None
+        if group:
+            groups[group].append((float(systolic), float(diastolic)))
+
+    def average(values: list[tuple[float, float]]) -> BloodPressureAverage:
+        if not values:
+            return BloodPressureAverage(count=0, systolic=None, diastolic=None)
+        return BloodPressureAverage(count=len(values),
+                                    systolic=round(sum(value[0] for value in values) / len(values), 1),
+                                    diastolic=round(sum(value[1] for value in values) / len(values), 1))
+
+    return WeeklyBloodPressureSummary(morning=average(groups["morning"]), evening=average(groups["evening"]))
 
 
 async def linked_patient(patient_id: str, user: User, session: AsyncSession) -> User:
@@ -150,12 +179,50 @@ async def patient_profile(patient_id: str, user: User = Depends(current_user),
                        "family_history": health.get("family_history", [])}}
 
 
+@router.get("/patients/{patient_id}/medications")
+async def patient_medications(
+    patient_id: str,
+    scheduled_on: date = Query(...),
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    patient = await linked_patient(patient_id, user, session)
+    health = patient.health_profile or {}
+    if not health.get("share_medications", False):
+        return {"shared": False, "medications": [], "intakes": []}
+    day = scheduled_on.isoformat()
+    medications = list(await session.scalars(select(Medication).where(Medication.user_id == patient.id)
+                                             .order_by(Medication.created_at)))
+    active = [medication for medication in medications
+              if medication.start_date <= day and (not medication.days or
+                 scheduled_on <= date.fromisoformat(medication.start_date) + timedelta(days=medication.days - 1))]
+    intakes = []
+    if active:
+        intakes = list(await session.scalars(select(MedicationIntake).where(
+            MedicationIntake.user_id == patient.id,
+            MedicationIntake.scheduled_on == day,
+            MedicationIntake.medication_id.in_([medication.id for medication in active]),
+        )))
+    return {"shared": True, "medications": active, "intakes": intakes}
+
+
 @router.get("/patients/{patient_id}/risk")
 async def patient_risk(patient_id: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     patient = await linked_patient(patient_id, user, session)
     if not patient.health_profile:
         raise HTTPException(404, "Không tìm thấy hồ sơ được chia sẻ.")
     return risk_overview(AccountProfile.model_validate(patient.health_profile), await current_vital_score(patient.id, session))
+
+
+@router.get("/patients/{patient_id}/weekly-bp", response_model=WeeklyBloodPressureSummary)
+async def patient_weekly_blood_pressure(
+    patient_id: str,
+    timezone_offset: int = Query(default=0, ge=-720, le=840),
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    patient = await linked_patient(patient_id, user, session)
+    return await weekly_bp_summary(patient.id, timezone_offset, session)
 
 
 @router.get("/patients/{patient_id}/assessments", response_model=list[AssessmentHistoryItem])

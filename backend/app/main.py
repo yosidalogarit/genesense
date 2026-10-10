@@ -1,8 +1,9 @@
 import hashlib
 import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -10,20 +11,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .auth import current_user, public_user, router as auth_router
-from .care import current_vital_score, router as care_router
+from .care import current_vital_score, router as care_router, weekly_bp_summary
 from .config import get_settings
 from .database import engine, get_session
 from .migrations import migrate_schema
-from .models import Assessment, Avatar, Feedback, MedicalRecord, Medication, User
+from .models import Assessment, Avatar, Feedback, MedicalRecord, Medication, MedicationIntake, User
 from .schemas import (AccountProfile, AssessmentCreate, AssessmentHistoryItem, AssessmentResult,
                       FeedbackCreate, FeedbackResult, MedicalDocumentAnalyzeResult,
-                      MedicalRecordCreate, MedicalRecordResult, MeasurementCreate)
-from .schemas import MedicationInput, MedicationResult
+                      MedicalRecordCreate, MedicalRecordResult, MeasurementCreate,
+                      MedicationInput, MedicationIntakeResult, MedicationIntakeUpdate, MedicationResult,
+                      WeeklyBloodPressureSummary)
 from .services.ai_service import AIInsightService
 from .services.risk_engine import calculate_risk, risk_overview
 
@@ -162,6 +165,12 @@ async def create_assessment(measurement: MeasurementCreate, user: User = Depends
                             session: AsyncSession = Depends(get_session)):
     if not user.onboarding_completed or not user.health_profile:
         raise HTTPException(409, "Hãy hoàn thành hồ sơ sức khỏe trước lần theo dõi đầu tiên.")
+    if measurement.client_id:
+        existing = await session.scalar(select(Assessment).where(
+            Assessment.user_id == user.id, Assessment.client_id == measurement.client_id
+        ))
+        if existing:
+            return AssessmentResult.model_validate(existing.result | {"id": existing.id})
     profile = AccountProfile.model_validate(user.health_profile)
     payload = AssessmentCreate(profile=profile.profile, family_history=profile.family_history,
                                vitals=measurement.vitals, samples=measurement.samples)
@@ -173,14 +182,27 @@ async def create_assessment(measurement: MeasurementCreate, user: User = Depends
     if measurement.measured_on:
         # Midday UTC keeps the printed date the same calendar day in Vietnam and nearby time zones.
         result.created_at = datetime.combine(measurement.measured_on, time(12), tzinfo=timezone.utc)
+    elif measurement.vitals.timestamp:
+        result.created_at = measurement.vitals.timestamp.astimezone(timezone.utc)
     record = Assessment(user_id=user.id, created_at=result.created_at, profile=payload.profile.model_dump(mode="json"),
+                        client_id=measurement.client_id,
                         family_history=[item.model_dump(mode="json") for item in payload.family_history],
                         vitals=measurement.vitals.model_dump(mode="json") | {"source": measurement.source},
                         risk_level=result.risk_level, overall_score=result.scores.overall,
                         pgrs_score=result.scores.pgrs, brs_score=result.scores.brs, vital_score=result.scores.vitals,
                         result=result.model_dump(mode="json"))
     session.add(record)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        if measurement.client_id:
+            existing = await session.scalar(select(Assessment).where(
+                Assessment.user_id == user.id, Assessment.client_id == measurement.client_id
+            ))
+            if existing:
+                return AssessmentResult.model_validate(existing.result | {"id": existing.id})
+        raise
     result.id = record.id
     return result
 
@@ -191,6 +213,15 @@ async def list_assessments(limit: int = Query(default=30, ge=1, le=100),
     rows = await session.scalars(select(Assessment).where(Assessment.user_id == user.id)
                                 .order_by(Assessment.created_at.desc()).limit(limit))
     return list(rows)
+
+
+@app.get("/api/assessments/weekly-bp", response_model=WeeklyBloodPressureSummary)
+async def weekly_blood_pressure(
+    timezone_offset: int = Query(default=0, ge=-720, le=840),
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await weekly_bp_summary(user.id, timezone_offset, session)
 
 
 @app.get("/api/assessments/{assessment_id}", response_model=AssessmentResult)
@@ -334,6 +365,61 @@ async def list_medications(user: User = Depends(current_user), session: AsyncSes
     return list(await session.scalars(select(Medication).where(Medication.user_id == user.id).order_by(Medication.created_at)))
 
 
+@app.get("/api/medications/intakes", response_model=list[MedicationIntakeResult])
+async def list_medication_intakes(
+    scheduled_on: date = Query(...),
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return list(await session.scalars(select(MedicationIntake).where(
+        MedicationIntake.user_id == user.id, MedicationIntake.scheduled_on == scheduled_on.isoformat()
+    )))
+
+
+@app.put("/api/medications/{medication_id}/intakes/{slot}", response_model=MedicationIntakeResult)
+async def set_medication_intake(
+    medication_id: str,
+    slot: Literal["morning", "noon", "afternoon", "evening"],
+    payload: MedicationIntakeUpdate,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    medication = await own_medication(medication_id, user, session)
+    if not getattr(medication, slot):
+        raise HTTPException(422, "Buổi này không có trong lịch thuốc.")
+    day = payload.scheduled_on.isoformat()
+    if day < medication.start_date or (medication.days and payload.scheduled_on > date.fromisoformat(medication.start_date) + timedelta(days=medication.days - 1)):
+        raise HTTPException(422, "Ngày này không nằm trong đợt dùng thuốc.")
+    intake = await session.scalar(select(MedicationIntake).where(
+        MedicationIntake.medication_id == medication.id,
+        MedicationIntake.scheduled_on == day,
+        MedicationIntake.slot == slot,
+    ))
+    if not payload.taken:
+        if intake:
+            await session.delete(intake)
+            await session.commit()
+        return MedicationIntakeResult(medication_id=medication.id, scheduled_on=payload.scheduled_on,
+                                      slot=slot, taken=False)
+    if not intake:
+        intake = MedicationIntake(user_id=user.id, medication_id=medication.id, scheduled_on=day, slot=slot)
+        session.add(intake)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            intake = await session.scalar(select(MedicationIntake).where(
+                MedicationIntake.medication_id == medication.id,
+                MedicationIntake.scheduled_on == day,
+                MedicationIntake.slot == slot,
+            ))
+    taken_at = intake.taken_at if intake else datetime.now(timezone.utc)
+    if taken_at.tzinfo is None:  # SQLite drops the offset when a row is read back.
+        taken_at = taken_at.replace(tzinfo=timezone.utc)
+    return MedicationIntakeResult(medication_id=medication.id, scheduled_on=payload.scheduled_on,
+                                  slot=slot, taken=True, taken_at=taken_at)
+
+
 @app.post("/api/medications", response_model=MedicationResult, status_code=201)
 async def add_medication(payload: MedicationInput, user: User = Depends(current_user),
                          session: AsyncSession = Depends(get_session)):
@@ -359,7 +445,9 @@ async def update_medication(medication_id: str, payload: MedicationInput, user: 
 @app.delete("/api/medications/{medication_id}", status_code=204)
 async def delete_medication(medication_id: str, user: User = Depends(current_user),
                             session: AsyncSession = Depends(get_session)):
-    await session.delete(await own_medication(medication_id, user, session))
+    medication = await own_medication(medication_id, user, session)
+    await session.execute(delete(MedicationIntake).where(MedicationIntake.medication_id == medication.id))
+    await session.delete(medication)
     await session.commit()
 
 

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .database import get_session
-from .models import Assessment, Avatar, CareCodeFailure, Medication, CareInvite, CareLink, Feedback, LoginSession, MedicalRecord, User
+from .models import Assessment, Avatar, CareCodeFailure, Medication, MedicationIntake, CareInvite, CareLink, Feedback, LoginSession, MedicalRecord, User
 
 settings = get_settings()
 router = APIRouter(prefix="/api/auth", tags=["Account"])
@@ -122,7 +122,7 @@ async def purge_old_trial_accounts(session: AsyncSession) -> int:
     ids = list(await session.scalars(select(User.id).where(User.is_demo, User.created_at < cutoff)))
     if not ids:
         return 0
-    for model in (LoginSession, Assessment, Feedback, MedicalRecord, CareCodeFailure, Avatar, Medication):
+    for model in (LoginSession, Assessment, Feedback, MedicalRecord, CareCodeFailure, Avatar, MedicationIntake, Medication):
         await session.execute(delete(model).where(model.user_id.in_(ids)))
     await session.execute(delete(CareInvite).where(CareInvite.patient_id.in_(ids)))
     await session.execute(delete(CareLink).where(or_(CareLink.patient_id.in_(ids), CareLink.caregiver_id.in_(ids))))

@@ -12,3 +12,9 @@ def migrate_schema(connection):
             connection.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id VARCHAR(36) REFERENCES users(id)"))
         connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id)"))
     # Legacy rows deliberately keep user_id=NULL; they belong to no new account.
+    assessment_columns = {column["name"] for column in inspect(connection).get_columns("assessments")}
+    if "client_id" not in assessment_columns:
+        connection.execute(text("ALTER TABLE assessments ADD COLUMN client_id VARCHAR(36)"))
+    connection.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_assessments_user_client_id ON assessments (user_id, client_id)"
+    ))

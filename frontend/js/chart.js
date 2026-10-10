@@ -21,12 +21,29 @@ export class TrendChart {
     this.host = host;
     this.config = null;
     this.active = -1;
+    this.animationPlayed = matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window);
+    if (!this.animationPlayed) this.revealObserver = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting) || !this.svg) return;
+      this.animationPlayed = true;
+      const svg = this.svg;
+      const finish = event => {
+        if (event.type !== "animationcancel" && event.animationName !== "chart-point-in") return;
+        svg.classList.remove("chart-animate");
+        svg.removeEventListener("animationend", finish);
+        svg.removeEventListener("animationcancel", finish);
+      };
+      svg.addEventListener("animationend", finish);
+      svg.addEventListener("animationcancel", finish);
+      svg.classList.add("chart-animate");
+      this.revealObserver.disconnect();
+    }, { threshold: 0.12, rootMargin: "0px 0px -80px 0px" });
     this.tip = document.createElement("div");
     this.tip.className = "chart-tip hidden";
     host.append(this.tip);
     new ResizeObserver(() => this.draw()).observe(host);
-    host.addEventListener("pointermove", event => this.pointer(event));
-    host.addEventListener("pointerleave", () => this.show(-1));
+    host.addEventListener("pointermove", event => { if (event.pointerType !== "touch") this.pointer(event); });
+    host.addEventListener("pointerup", event => { if (event.pointerType === "touch") this.pointer(event); });
+    host.addEventListener("pointerleave", event => { if (event.pointerType !== "touch") this.show(-1); });
     host.addEventListener("blur", () => this.show(-1));
     host.addEventListener("focus", () => this.show(this.count() - 1));
     host.addEventListener("keydown", event => {
@@ -49,6 +66,9 @@ export class TrendChart {
 
   draw() {
     this.svg?.remove();
+    this.svg = null;
+    this.geometry = null;
+    this.cross = null;
     this.tip.classList.add("hidden");
     const width = this.host.clientWidth;
     const c = this.config;
@@ -87,10 +107,10 @@ export class TrendChart {
     const labels = [];
     for (const s of c.series) {
       const d = s.values.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join(" ");
-      if (n > 1) svg.append(el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", ...(s.dash ? { "stroke-dasharray": s.dash } : {}) }));
+      if (n > 1) svg.append(el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", ...(s.dash ? { "stroke-dasharray": s.dash } : { class: "chart-series-line", pathLength: 1 }) }));
       s.values.forEach((v, i) => {
         const last = i === n - 1;
-        svg.append(el("circle", { cx: x(i), cy: y(v), r: 4, fill: last ? s.color : "#fff", stroke: s.color, "stroke-width": 2 }));
+        svg.append(el("circle", { class: "chart-series-point", cx: x(i), cy: y(v), r: 4, fill: last ? s.color : "#fff", stroke: s.color, "stroke-width": 2 }));
       });
       labels.push({ y: y(s.values[n - 1]), text: valueFormat.format(s.values[n - 1]) });
     }
@@ -100,6 +120,7 @@ export class TrendChart {
     labels.forEach(label => svg.append(el("text", { class: "chart-value", x: x(n - 1) + 10, y: label.y, "dominant-baseline": "middle" }, label.text)));
     this.svg = svg;
     this.host.prepend(svg);
+    if (!this.animationPlayed) this.revealObserver.observe(this.host);
     if (this.active >= 0) this.show(this.active);
   }
 

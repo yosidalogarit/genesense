@@ -48,6 +48,7 @@ class Assessment(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
+    client_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     profile: Mapped[dict] = mapped_column(JSON)
     family_history: Mapped[list] = mapped_column(JSON)
@@ -134,3 +135,17 @@ class Medication(Base):
     start_date: Mapped[str] = mapped_column(String(10))
     days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str] = mapped_column(String(200), default="")
+
+
+class MedicationIntake(Base):
+    """A user's daily record that one scheduled medicine was taken."""
+
+    __tablename__ = "medication_intakes"
+    __table_args__ = (UniqueConstraint("medication_id", "scheduled_on", "slot"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    medication_id: Mapped[str] = mapped_column(ForeignKey("medications.id"), index=True)
+    scheduled_on: Mapped[str] = mapped_column(String(10), index=True)
+    slot: Mapped[str] = mapped_column(String(12))
+    taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
