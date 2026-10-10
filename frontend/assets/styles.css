@@ -800,3 +800,7 @@ body.viewing .own-only { display: none !important; }
   .profile-genetics-link:hover .profile-genetics-icon, .profile-genetics-link:active .profile-genetics-icon,
   .nav-drawer-links [data-nav]:active .nav-item-icon, .service:active .feature-icon, .mobile-nav button:active .icon { transform: none !important; filter: none !important; }
 }
+
+/* "Hiệu ứng kính mờ" switched off in Hồ sơ: solid navigation surfaces, no blur. */
+body.no-glass .app-site-header, body.no-glass .nav-scrim, body.no-glass .nav-drawer, body.no-glass .mobile-nav { -webkit-backdrop-filter: none; backdrop-filter: none; }
+body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile-nav { background: #fff; }

@@ -1743,7 +1743,16 @@ async function boot() {
   }
 }
 
+// "Hiệu ứng kính mờ" is a choice for this device, so it is kept in this browser only. On by default.
+function applyGlass(on) {
+  document.body.classList.toggle("no-glass", !on);
+  $("#glass-setting").checked = on;
+}
 function bindEvents() {
+  $("#glass-setting").addEventListener("change", event => {
+    applyGlass(event.target.checked);
+    try { localStorage.setItem("genesense-glass", event.target.checked ? "on" : "off"); } catch {}
+  });
   $("#sidebar-toggle").addEventListener("click", () => setNavDrawer($("#sidebar-toggle").getAttribute("aria-expanded") !== "true"));
   $("#nav-close").addEventListener("click", () => setNavDrawer(false));
   $("#nav-scrim").addEventListener("click", () => setNavDrawer(false));
@@ -1950,5 +1959,6 @@ function bindEvents() {
 }
 hydrateIcons();
 bindEvents();
+try { applyGlass(localStorage.getItem("genesense-glass") !== "off"); } catch { applyGlass(true); }
 if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
 boot();
