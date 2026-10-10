@@ -6,13 +6,13 @@ Read this before doing anything. It describes the current state only. The longer
 
 - **Project folder:** `F:\CLAUDE CODE\GeneSense-share` (Windows 11).
 - **Repository:** https://github.com/yosidalogarit/genesense (private).
-- **Branch:** `master` is at `a8f2296` (PR #22 merged), in sync with GitHub. Old merged branches stay: the owner chose to keep them (3 October 2026).
-- **Pull requests:** #1 to #22 are all **merged** into `master`. Nothing is open. Merged feature branches still exist locally and on GitHub; never branch from them, always from an up-to-date `master`.
-- **Tests:** 34 backend tests pass with a plain `pytest` run.
-- **Service worker cache name:** `genesense-v38` in `frontend/sw.js`, the same on the live site.
+- **Branch:** `master` is at `605f630` (PR #23 merged). Old merged branches stay: the owner chose to keep them (3 October 2026).
+- **Pull requests:** #1 to #23 are merged. **#24** (`feat/care-ui-review`, by the owner's friend `huutien2009vn`, 7 commits of 6 October) is open; the pull request from `sync/friend-changes` contains those 7 commits plus the fixes below, and merging it also marks #24 as merged. Never branch from merged feature branches, always from an up-to-date `master`.
+- **Tests:** 37 backend tests pass with a plain `pytest` run.
+- **Service worker cache name:** `genesense-v48` on `sync/friend-changes`; the live site still serves `genesense-v38` until that pull request is merged.
 - **Design critique scores so far:** 24, 25, 27 out of 40 for the whole app; 25 out of 40 for the "Di truyền" tab alone (1 October 2026); **27 out of 40 for the medicine schedule** (2 October 2026). The findings of the last two runs were fixed afterwards, but neither critique was re-run, so there is no newer score. Reports are in `.impeccable/critique/`. A session may list a bundled `anthropic-skills:impeccable`; invoking it loads the instructions, but its script folder did not exist on disk. Run the scripts from the local copy at `F:\CLAUDE CODE\.agents\skills\impeccable` (same instructions, with the binary).
 - **Hosting:** the app is **live at https://genesense-five.vercel.app** (Vercel team "GeneSense", project `genesense`, free Hobby plan) with a **Neon** PostgreSQL database (Neon project id `fragrant-glade-42196249`, branch `production`). Vercel redeploys on every push to `master`. The Vercel connector in this setup cannot read that team, so check the site over plain HTTP.
-- **Nothing is in progress.** PR #22 (3 October 2026) restored saving scanned documents (`applyDocument()` and `documentVitals()` had been deleted by mistake in PR #20), added the server check for "Khi cần", the duplicate-medicine question, the confirm-dialog Esc fix and "Thuốc đang dùng" on the report. Live check after the merge (3 October 2026): cache `genesense-v38`, policy header sent, function in Singapore, the new code served, `/api/medications` answers 401 without login, document reading on. No real scan was run on the live site.
+- **In progress (10 October 2026): the friend's work.** The owner shared the project with a friend, who worked with Codex in a separate public repository, https://github.com/huutien2009vn/GS1 (`main` = our `master` at `605f630` plus his 7 app commits of PR #24 and one commit rewriting HANDOFF.md). The owner asked to bring his changes into this repository. Branch `sync/friend-changes` = PR #24 plus two fixes: the trial cleanup now deletes "Đã uống" ticks (it would otherwise fail on PostgreSQL once an old trial account had one), and the "Hiệu ứng kính mờ" switch. His HANDOFF rewrite was not taken; its news is folded into this file. **GS1 is public**, so the app's code is readable by anyone; the owner was told to have it made private or deleted. Checked: tests, the switch at 375px in Playwright. Not checked: his features in the browser, the live site.
 - **Live 3-day cleanup test running:** trial account created on the live site at 2026-10-03 03:03:39 UTC; its cookie is in `.tools/cleanup-test.json` (git-ignored). After 2026-10-06 03:04 UTC run `.venv/Scripts/python .tools/cleanup_test.py check`: it requests one trial account (which runs the cleanup) and then calls `/api/auth/me` with the old cookie, which must answer 401. Delete `.tools/cleanup-test.json` afterwards.
 - **Servers on this PC:** none running (checked 3 October 2026: ports 8000, 8001 and 8002 free, no Python or `cloudflared` process). A session starts the development server itself with the preview tool (`genesense`, port 8000). If port 8000 is ever taken by a server from another chat, see "The dev server's `--reload` can hang" in section 3. Start a public tunnel only when the owner asks.
 - **The Notion page is up to date through PR #21.**
@@ -89,7 +89,7 @@ GeneSense AI Core is a web app (PWA) for chronic-disease screening and home vita
 ### Design direction
 
 - Professional, uncluttered, **not AI-looking**, credible as a **Vietnamese government app (VNeID-like restraint)**. Not fancy.
-- No gradients, glass or blur, uppercase letter-spaced labels above headings, decorative icons, hover-lift, slogans or "coach" copy, or em-dashes in UI text.
+- No uppercase letter-spaced labels above headings, decorative icons, slogans or "coach" copy, or em-dashes in UI text. **Glass and blur are now allowed** (owner, 10 October 2026, after the friend's redesign): the header, the side menu and the phone bar are see-through and blurred by default, and Hồ sơ has a "Hiển thị" panel with a "Hiệu ứng kính mờ" checkbox that makes them solid white (`body.no-glass`, kept per browser in `localStorage` key `genesense-glass`). The friend's redesign also brought gradients (status panel, login screen, menu icons) and hover effects; the owner has not ruled on those separately.
 - Text is never smaller than 16px. Green, amber and red are only for health status and always come with a word or shape.
 - Safe status wording: **"An toàn"** everywhere (status word, tags, per-value words). The owner shortened it from "Trong ngưỡng an toàn" on 2 October 2026; never "Bình thường".
 - Features that are switched off (Google sign-in, document scanning) **stay visible**, reworded to "… sẽ có trong bản chính thức". Never mention "máy chủ".
@@ -130,8 +130,8 @@ GeneSense AI Core is a web app (PWA) for chronic-disease screening and home vita
 - **From a scan:** the review step shows one card per medicine with name, strength, amount, the time boxes, before or after meals and number of days, all editable. A name the AI is unsure of starts **unticked** with an amber warning. The course starts on the document's date, or today when the document has none.
 - **The AI copies, the code decides the times.** A handwriting test on three English samples showed names in legible handwriting are read correctly, scribble is flagged unsure, and **times of day are often wrong**. So Gemini returns the prescription's own wording (`frequency`), and `medication_slots()` in `ai_service.py` ticks boxes only for "1-0-1" patterns (four numbers add the afternoon) and the words sáng, trưa, chiều, tối. "tối đa", "tối thiểu" and "ánh sáng" are ignored. Anything else leaves the boxes empty for the user. The owner agreed to both rules.
 - **Safety:** the app only copies the prescription. No dose advice, no interaction checks, no suggested drugs. The schedule says to follow the paper prescription and the doctor when they differ.
-- **Phases agreed with the owner:** phase 1 (done) is the above. **Phase 2:** "Đã uống" ticks per time of day, **stored on the server** (owner, 3 October 2026), a printable one-page schedule, and the caregiver's read-only view of the schedule and its ticks (**agreed by the owner on 3 October 2026**). **Phase 3:** reminders (needs notifications).
-- Medicines are not part of the shared (caregiver) view yet (agreed for phase 2). They are on the doctor's report (PR #22).
+- **Phases agreed with the owner:** phase 1 (done) is the above. **Phase 2, built by the friend (PR #24, 6 October 2026):** "Đã uống" ticks per time of day stored on the server (`medication_intakes` table, `GET /api/medications/intakes`, `PUT /api/medications/{id}/intakes/{slot}`; deleting a medicine deletes its ticks), a printable schedule, and the caregiver's read-only view of the schedule and ticks, shown only when the patient turns on `share_medications`. **Phase 3:** reminders (needs notifications).
+- Medicines are shared with caregivers only when the patient turns on `share_medications`. They are on the doctor's report; while viewing a relative the report still leaves its "Thuốc đang dùng" section out (revisit now that sharing exists).
 
 ### Readings list ("Các lần đo")
 
@@ -178,7 +178,7 @@ GeneSense AI Core is a web app (PWA) for chronic-disease screening and home vita
 
 ### Family risk ("Di truyền" tab)
 
-- A **standalone tab**, kept as a tab after the critique questioned it.
+- A tab of its own on wide screens. **On phones it lives inside Hồ sơ** (friend's change, kept by the owner on 10 October 2026): the phone bar has Hôm nay, Lịch sử, Giấy tờ, Hồ sơ, and Di truyền opens from a link in Hồ sơ or from the side menu.
 - Result per condition is a **level with reasons, never a percentage**: Rất cao, Cao, Trung bình, Chưa ghi nhận, Chưa đủ thông tin, Đã được chẩn đoán.
 - **Levels stop at amber.** "Rất cao" and "Cao" are both amber triangles and differ by the word and a 3-step meter; "Trung bình" is a dark diamond; diagnosed is a blue square. No red on this tab.
 - Conditions tracked: hypertension, diabetes, cardiovascular disease, stroke, dyslipidemia, breast cancer, colorectal cancer. The last three were added at the owner's request. The owner declined collecting age at diagnosis.
@@ -203,7 +203,7 @@ GeneSense AI Core is a web app (PWA) for chronic-disease screening and home vita
 ### Family sharing (caregiver view)
 
 - A parent shares a **one-time code**; an adult child signs in with their own account and sees the parent's data **read-only**; the parent can revoke at any time.
-- Shared: status, readings, charts, **profile and family tree**. Not shared: email, free-text notes, consents, scanned documents.
+- Shared: status, readings, charts, **profile and family tree**, and the medicine schedule with its ticks when the patient allows it (`share_medications`). Not shared: email, free-text notes, consents, scanned documents.
 
 ### Working style
 
@@ -226,6 +226,15 @@ GeneSense AI Core is a web app (PWA) for chronic-disease screening and home vita
 - When the owner says "commit" after work on a branch, they mean commit, push and open the pull request. When asked to check for oversights, they expect the found problems to be fixed and listed, not only reported.
 - **Outside such a requested review, change only what was asked.** After answering open questions the owner wrote "Dont change anything else (ask me first)" (1 October 2026): anything further, including wording and small polish, is raised as a question first.
 - Handoff notes must describe the current state only: no recency bias, every relevant decision included, no fixed bugs or abandoned attempts.
+
+### Added by the friend's work (PR #24, 6 October 2026)
+
+- **Navigation:** the GeneSense logo opens a side menu (`setNavDrawer()`, `#app-nav-drawer`, `.nav-scrim`), with an overlay, focus kept inside and Esc to close.
+- **Readings sent twice are saved once:** manual readings carry a `client_id`; `POST /api/assessments` returns the existing reading for a repeated id (unique index on `user_id, client_id`, added in `migrations.py`).
+- **7-day blood-pressure summary** split into morning and evening on Lịch sử (`state.weeklyBP`).
+- **Chart and vital-card animations** the first time they scroll into view, off under `prefers-reduced-motion`.
+- **`CLINICAL_REVIEW_CHECKLIST.md`** in the project root: what a clinician should review before any claim beyond a demo.
+- The friend's own notes say none of this was checked on a real phone, on Safari, with a Bluetooth device, or on a deployed copy.
 
 ## 5. What the app does now (map of the code)
 
@@ -286,11 +295,11 @@ Ask the owner which one to do next. Rough priority order:
 2. **Family tree on phones:** the lines from grandparents to parents are hidden at phone width, so it reads as a grid of boxes. Restore connectors within each family-side column and remove the gap above the children row.
 3. **Check one printed report by eye.** The report was verified on screen and a 70-row test produced a 5-page A4 PDF, but page breaks were never inspected visually.
 4. **Have a clinician review the family-risk rules and advice text** before any claim beyond a demo.
-5. **Medicine schedule, phase 2** (agreed with the owner): "Đã uống" ticks per time of day, a printable one-page schedule, the caregiver's read-only view. Then phase 3, reminders.
+5. **Check the friend's work in the browser** (PR #24): side menu and phone bar at 375px, "Đã uống" ticks, the printable schedule, `share_medications` in the caregiver view, the 7-day morning and evening blood-pressure summary, chart animations under `prefers-reduced-motion`, and the document photo flow. Then phase 3 of the medicine schedule, reminders.
 6. **Second handwriting test** with Vietnamese prescriptions once the owner sends them (script idea: call `_gemini_generate` per model with a small medicines schema and compare with a human reading). Vietnamese hospital prescriptions are mostly printed, which should read better than the English handwritten samples.
 7. **Features the owner has seen and may want next:**
    - context tags for readings (before or after meals, after rest or activity) plus a short symptom note;
-   - 7-day blood-pressure averages with a morning and evening split;
+   - (done by the friend: 7-day blood-pressure summary with a morning and evening split)
    - entering family history by tapping the family tree;
    - offline entry;
    - Zalo or phone-number sign-in (written up on the Notion page; recommendation: Zalo first, phone OTP later; HTTPS hosting now exists on Vercel, so what is still missing is the owner registering a Zalo app, or a paid message provider for phone codes);
