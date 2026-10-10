@@ -819,3 +819,7 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
   .ft-father, .ft-mother { width: 100%; }
   .ft-node { min-height: 0; padding: 10px; }
 }
+.chart-flag { fill: var(--amber); stroke: #fff; stroke-width: 1.5; }
+.report-sheet .chart-flag { fill: #000; }
+/* On narrow phones the measuring form is one field per row. */
+@media (max-width: 480px) { #measurement-form .field-grid { grid-template-columns: 1fr; } }

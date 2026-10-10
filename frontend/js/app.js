@@ -228,6 +228,9 @@ function valueOf(key, values = {}) {
   if (key === "systolic") return Math.round(values.systolic) + "/" + (values.diastolic == null ? "-" : Math.round(values.diastolic));
   return key === "spo2" ? num(values[key]) : Math.round(values[key]).toString();
 }
+// On the blood-pressure chart each line is judged by its own number, so a high diastolic marks the diastolic line.
+const chartStatus = (key, v) => key === "systolic" ? statusOf("systolic", { systolic: v.systolic, diastolic: 0 })[0]
+  : key === "diastolic" ? statusOf("systolic", { systolic: 0, diastolic: v.diastolic })[0] : statusOf(key, v)[0];
 function statusOf(key, v) {
   if (v[key] == null) return ["neutral", "Chưa đo"];
   const n = v[key];
@@ -601,7 +604,8 @@ function renderTrends() {
     if (!points.length) continue;
     trendCharts[id] ||= new TrendChart(host);
     trendCharts[id].set({ unit: spec.unit, band: spec.band, thresholds: spec.thresholds, min: spec.min, max: spec.max, times: points.map(row => toDate(row.created_at)),
-      series: spec.series.map(([key, label, color]) => ({ label, color, values: points.map(row => chartValue(key, row.vitals[key])) })) });
+      series: spec.series.map(([key, label, color]) => ({ label, color, values: points.map(row => chartValue(key, row.vitals[key])),
+        flags: points.map(row => ["attention", "alert"].includes(chartStatus(key, row.vitals))) })) });
   }
 }
 function pickCurrent(rows) {
@@ -1943,7 +1947,7 @@ function bindEvents() {
   });
   $("#medical-upload-dialog").addEventListener("close", resetMedicalUpload);
   $$("[data-measure-mode]").forEach(button => button.addEventListener("click", () => setMeasureMode(button.dataset.measureMode)));
-  $("#measurement-dialog").addEventListener("close", stopStreams);
+  $("#measurement-dialog").addEventListener("close", () => { stopStreams(); $("#measurement-form").reset(); });
   $("#measurement-form").addEventListener("submit", submitManual);
   // A message about the old input must not stay once the user changes it.
   $("#measurement-form").addEventListener("input", event => { errorAt("#measurement-error"); if (event.target.name in FIELD_NAMES) fieldHint(event.target); });
