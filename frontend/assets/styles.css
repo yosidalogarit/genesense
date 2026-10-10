@@ -800,3 +800,11 @@ body.viewing .own-only { display: none !important; }
 body.no-glass .app-site-header, body.no-glass .nav-scrim, body.no-glass .nav-drawer, body.no-glass .mobile-nav { -webkit-backdrop-filter: none; backdrop-filter: none; }
 body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile-nav { background: #fff; }
 .setting-row { min-height: 44px; align-items: center; }
+/* Visible cue that the logo button opens the side menu. */
+.menu-cue { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--ink); font-size: .889rem; font-weight: 700; }
+.menu-cue .icon { width: 20px; height: 20px; }
+.brand-toggle:hover .menu-cue { border-color: var(--blue); color: var(--blue); }
+/* Di truyền button at the top of Hồ sơ, and the phone-only way back to it. */
+.profile-genetics-top { margin: 0 0 24px; }
+.back-to-profile { display: none; }
+@media (max-width: 760px) { .back-to-profile { display: inline-flex; min-height: 44px; margin-bottom: 4px; } }
