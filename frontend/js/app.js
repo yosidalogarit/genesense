@@ -550,7 +550,6 @@ function renderDashboard() {
   const recent = r && !isEmergency(r) ? recentEmergency() : null;
   const level = r ? (recent ? "watch" : levelOf(r)) : "neutral";
   renderEmergency(r);
-  $("#quick-actions").classList.toggle("hidden", level === "emergency");
   const status = $("#risk-status");
   status.className = "status-word " + ({ emergency: "alert", watch: "attention" }[level] || level);
   status.textContent = r ? LEVELS[level] : "Chưa có dữ liệu";
@@ -1859,8 +1858,6 @@ function bindEvents() {
     const tab = event.target.closest("[data-records-tab]");
     if (tab) { state.recordsTab = tab.dataset.recordsTab; renderRecordsTab(); }
     if (event.target.closest("[data-open-medicines]")) { state.recordsTab = "medicines"; navigate("records"); }
-    if (event.target.closest("[data-open-documents]")) { state.recordsTab = "documents"; navigate("records"); }
-    if (event.target.closest("[data-open-report]")) openReport();
     if (event.target.closest("#medicine-print")) printMedicineSchedule();
     const historyTab = event.target.closest("[data-history-tab]");
     if (historyTab) showHistoryTab(historyTab.dataset.historyTab);
