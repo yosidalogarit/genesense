@@ -671,25 +671,12 @@ body.viewing .own-only { display: none !important; }
 /* Mobile nav */
 .mobile-nav { display: none; }
 
-/* Home: status first, then familiar services and the most recent readings. */
+/* Home: status first, then the most recent readings. */
 .dashboard-heading { align-items: center; }
 .dashboard-heading h1 { font-size: 1.7rem; letter-spacing: -.025em; }
 .dashboard-heading .lead { font-size: .889rem; margin-top: 6px; }
-.dashboard-overview { display: grid; grid-template-columns: 1.15fr 1fr; gap: 24px; align-items: stretch; margin-bottom: 30px; }
+.dashboard-overview { display: grid; grid-template-columns: 1fr; gap: 24px; margin-bottom: 30px; }
 .dashboard-overview > .panel { margin-bottom: 0; }
-.dashboard-overview:has(> .quick-actions.hidden), body.viewing .dashboard-overview { grid-template-columns: 1fr; }
-.quick-actions { padding: 24px; }
-.quick-actions h2 { font-size: 1.06rem; }
-.service-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; }
-.service { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; padding: 10px 4px; border: 0; border-radius: 12px; background: transparent; color: var(--ink); font-size: .889rem; font-weight: 600; line-height: 1.5; transition: background-color .2s, transform .24s var(--ease-out), box-shadow .2s ease-out; }
-.service:hover { background: #f0f6ff; transform: translateY(-2px); }
-.service:active { transform: translateY(0); }
-.feature-icon { display: grid; place-items: center; flex-shrink: 0; width: 50px; height: 50px; border-radius: 15px; color: var(--blue); background: #eaf2ff; border: 1px solid #d6e6ff; box-shadow: 0 2px 6px #1744770d; transform-style: preserve-3d; transition: transform .24s var(--ease-out), box-shadow .24s ease-out, filter .24s ease-out; }
-.feature-icon .icon { width: 26px; height: 26px; }
-.feature-icon.mint { color: #087e73; background: #e6f7f1; border-color: #cdece2; }
-.feature-icon.cyan { color: #07758b; background: #e6f7fc; border-color: #cdebf5; }
-.feature-icon.violet { color: #6950ad; background: #f0ebfc; border-color: #e3d9f9; }
-.feature-icon.peach { color: #a26328; background: #fff3e5; border-color: #f7e3c9; }
 .section-heading .link-button { font-size: .889rem; text-decoration: none; }
 .section-heading .link-button:hover { text-decoration: underline; }
 @media (min-width: 761px) and (max-width: 980px) {
@@ -701,12 +688,10 @@ body.viewing .own-only { display: none !important; }
 
 @media (hover: hover) and (pointer: fine) {
   .nav-drawer-links [data-nav]:hover .nav-item-icon,
-  .service:hover .feature-icon,
   .profile-genetics-link:hover .profile-genetics-icon,
   .mobile-nav button:hover .icon { transform: perspective(420px) translateY(-3px) rotateX(7deg) scale(1.07); box-shadow: 0 8px 16px #0756ce24; filter: drop-shadow(0 3px 4px #0756ce18); }
 }
 .nav-drawer-links [data-nav]:active .nav-item-icon,
-.service:active .feature-icon,
 .profile-genetics-link:active .profile-genetics-icon,
 .mobile-nav button:active .icon { transform: perspective(420px) translateY(-2px) rotateX(5deg) scale(1.06); filter: drop-shadow(0 3px 4px #0756ce20); }
 
@@ -720,9 +705,6 @@ body.viewing .own-only { display: none !important; }
   .dashboard-heading h1 { font-size: 1.35rem; }
   .dashboard-overview { grid-template-columns: 1fr; gap: 20px; margin-bottom: 24px; }
   .status-word { font-size: 1.5rem; }
-  .quick-actions { padding: 18px 14px; }
-  .service { font-size: .889rem; padding-block: 8px; }
-  .service-grid { gap: 12px 6px; }
   .page-heading .btn { width: 100%; }
   .panel { padding: 20px 16px; }
   .status-panel { padding: 24px 20px; }
@@ -791,9 +773,8 @@ body.viewing .own-only { display: none !important; }
   *, *::backdrop, *::details-content { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
   .reveal-pending { opacity: 1; transform: none; }
   .nav-drawer-links [data-nav]:hover .nav-item-icon, .nav-drawer-links [data-nav].active .nav-item-icon,
-  .service:hover .feature-icon, .mobile-nav button:hover .icon, .mobile-nav button.active .icon,
   .profile-genetics-link:hover .profile-genetics-icon, .profile-genetics-link:active .profile-genetics-icon,
-  .nav-drawer-links [data-nav]:active .nav-item-icon, .service:active .feature-icon, .mobile-nav button:active .icon { transform: none !important; filter: none !important; }
+  .nav-drawer-links [data-nav]:active .nav-item-icon, .mobile-nav button:active .icon { transform: none !important; filter: none !important; }
 }
 
 /* "Hiệu ứng kính mờ" switched off in Hồ sơ: solid navigation surfaces, no blur. */
