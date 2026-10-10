@@ -804,3 +804,4 @@ body.viewing .own-only { display: none !important; }
 /* "Hiệu ứng kính mờ" switched off in Hồ sơ: solid navigation surfaces, no blur. */
 body.no-glass .app-site-header, body.no-glass .nav-scrim, body.no-glass .nav-drawer, body.no-glass .mobile-nav { -webkit-backdrop-filter: none; backdrop-filter: none; }
 body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile-nav { background: #fff; }
+.setting-row { min-height: 44px; align-items: center; }

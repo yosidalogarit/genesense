@@ -192,13 +192,14 @@ async def create_assessment(measurement: MeasurementCreate, user: User = Depends
                         pgrs_score=result.scores.pgrs, brs_score=result.scores.brs, vital_score=result.scores.vitals,
                         result=result.model_dump(mode="json"))
     session.add(record)
+    user_id = user.id  # read before the commit: a rollback expires loaded objects, and async cannot reload them
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         if measurement.client_id:
             existing = await session.scalar(select(Assessment).where(
-                Assessment.user_id == user.id, Assessment.client_id == measurement.client_id
+                Assessment.user_id == user_id, Assessment.client_id == measurement.client_id
             ))
             if existing:
                 return AssessmentResult.model_validate(existing.result | {"id": existing.id})
@@ -217,7 +218,7 @@ async def list_assessments(limit: int = Query(default=30, ge=1, le=100),
 
 @app.get("/api/assessments/weekly-bp", response_model=WeeklyBloodPressureSummary)
 async def weekly_blood_pressure(
-    timezone_offset: int = Query(default=0, ge=-720, le=840),
+    timezone_offset: int = Query(default=0, ge=-840, le=720),  # Date.getTimezoneOffset(): UTC+14 is -840
     user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -401,22 +402,23 @@ async def set_medication_intake(
             await session.commit()
         return MedicationIntakeResult(medication_id=medication.id, scheduled_on=payload.scheduled_on,
                                       slot=slot, taken=False)
+    medication_id = medication.id  # read before the commit: a rollback expires loaded objects, and async cannot reload them
     if not intake:
-        intake = MedicationIntake(user_id=user.id, medication_id=medication.id, scheduled_on=day, slot=slot)
+        intake = MedicationIntake(user_id=user.id, medication_id=medication_id, scheduled_on=day, slot=slot)
         session.add(intake)
         try:
             await session.commit()
         except IntegrityError:
             await session.rollback()
             intake = await session.scalar(select(MedicationIntake).where(
-                MedicationIntake.medication_id == medication.id,
+                MedicationIntake.medication_id == medication_id,
                 MedicationIntake.scheduled_on == day,
                 MedicationIntake.slot == slot,
             ))
     taken_at = intake.taken_at if intake else datetime.now(timezone.utc)
     if taken_at.tzinfo is None:  # SQLite drops the offset when a row is read back.
         taken_at = taken_at.replace(tzinfo=timezone.utc)
-    return MedicationIntakeResult(medication_id=medication.id, scheduled_on=payload.scheduled_on,
+    return MedicationIntakeResult(medication_id=medication_id, scheduled_on=payload.scheduled_on,
                                   slot=slot, taken=True, taken_at=taken_at)
 
 

@@ -130,6 +130,13 @@ async function queueManualReading(body) {
   closeDialog($("#measurement-dialog"));
   $("#measurement-form").reset();
   toast("Đã lưu trên thiết bị. Ứng dụng sẽ đồng bộ khi có mạng; hiện chưa tính nguy cơ.");
+  // Offline the server cannot score the reading, but a dangerous value must still point to 115 at once.
+  if (METRICS.some(m => statusOf(m.key, body.vitals)[0] === "alert")) {
+    renderEmergency({ alerts: [{ severity: "alert" }], measured_vitals: body.vitals, created_at: body.vitals.timestamp || new Date().toISOString() });
+    navigate("dashboard");
+    const dialog = $("#measurement-dialog"), focusTitle = () => $("#emergency-title").focus();
+    if (dialog.open) dialog.addEventListener("close", focusTitle, { once: true }); else focusTitle();
+  }
 }
 async function syncPendingAssessments() {
   if (!state.user || state.viewing || !navigator.onLine || pendingSync) return;
@@ -149,9 +156,9 @@ async function syncPendingAssessments() {
       } catch (error) {
         if (!error.status) return; // keep it for the next online event; the idempotency key makes retries safe
         if (error.status === 401) return;
+        // A refused reading keeps its message for the user but must not hold back the readings after it.
         item.sync_error = error.message;
         await offlineRequest("readwrite", store => store.put(item));
-        return;
       }
     }
     state.pendingAssessments = await pendingForAccount(userId);
@@ -1029,13 +1036,15 @@ async function viewPatient(patientId) {
     $("#viewing-banner").classList.remove("hidden");
     personalize();
     const medicationPromise = api.careMedications(patientId, localDay()).catch(() => ({ shared: false, medications: [], intakes: [] }));
-    await Promise.all([refreshRecords(), refreshRisk(), medicationPromise.then(value => { state.viewingMedications = value; })]);
+    await Promise.all([refreshRecords(), refreshRisk(), medicationPromise.then(value => { if (state.viewing?.id === patientId) state.viewingMedications = value; })]);
+    if (state.viewing?.id !== patientId) return; // left, or moved to another relative, while loading
     renderProfile();
     navigate("dashboard");
   } catch (error) { toast(error.message, "error"); }
 }
 async function exitViewing() {
   if (!state.viewing) return;
+  state.authEpoch++; // answers still on their way for the relative must not land in the user's own data
   Object.assign(state, state.own, { viewing: null, viewingMedications: null, own: null });
   document.body.classList.remove("viewing");
   $("#viewing-banner").classList.add("hidden");
@@ -1174,7 +1183,10 @@ function renderMedicineLink() {
   link.classList.toggle("hidden", !count || (state.result && isEmergency(state.result)));
   link.textContent = "Hôm nay có " + count + " loại thuốc. Xem lịch uống thuốc";
 }
+// The "Đã uống" ticks belong to one calendar day; after midnight they must be fetched again.
+const refreshIfNewDay = () => { if (state.intakesDay && state.intakesDay !== localDay()) { state.medicationIntakes = null; state.intakesDay = null; void refreshMedications(); } };
 function renderRecordsTab() {
+  refreshIfNewDay();
   const tab = state.recordsTab || (state.medications.length ? "medicines" : "documents");
   $$("[data-records-tab]").forEach(button => {
     button.classList.toggle("active", button.dataset.recordsTab === tab);
@@ -1218,7 +1230,7 @@ async function refreshMedications() {
   try {
     const [rows, intakes] = await Promise.all([api.medications(), api.medicationIntakes(day)]);
     if (epoch !== state.authEpoch) return;
-    state.medications = rows; state.medicationIntakes = intakes;
+    state.medications = rows; state.medicationIntakes = intakes; state.intakesDay = day;
   } catch (error) { if (epoch !== state.authEpoch) return; toast(error.message, "error"); }
   renderMedicines();
 }
@@ -1953,7 +1965,7 @@ function bindEvents() {
   window.addEventListener("pageshow", event => { if (event.persisted) { clearAccount(); boot(); } });
   document.addEventListener("visibilitychange", async () => {
     if (document.hidden || !state.user) return;
-    try { const me = await api.me(); if (me.id !== state.user?.id) { clearAccount(); await boot(); } else void syncPendingAssessments(); }
+    try { const me = await api.me(); if (me.id !== state.user?.id) { clearAccount(); await boot(); } else { void syncPendingAssessments(); refreshIfNewDay(); } }
     catch (error) { if (error.status === 401) { clearAccount(); await boot(); } }
   });
 }
