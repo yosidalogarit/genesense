@@ -217,7 +217,7 @@ async def patient_risk(patient_id: str, user: User = Depends(current_user), sess
 @router.get("/patients/{patient_id}/weekly-bp", response_model=WeeklyBloodPressureSummary)
 async def patient_weekly_blood_pressure(
     patient_id: str,
-    timezone_offset: int = Query(default=0, ge=-720, le=840),
+    timezone_offset: int = Query(default=0, ge=-840, le=720),  # Date.getTimezoneOffset(): UTC+14 is -840
     user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ):

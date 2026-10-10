@@ -88,7 +88,7 @@ GeneSense AI Core is a web app (PWA) for chronic-disease screening and home vita
 
 ### Design direction
 
-- Professional, uncluttered, **not AI-looking**, credible as a **Vietnamese government app (VNeID-like restraint)**. Not fancy.
+- Professional, uncluttered, **not AI-looking**, credible as a Vietnamese public-service app. Since 10 October 2026 the visual style is the lighter, glassier one in "Design language" below; keep its restraint (no decorative extras, slogans or eyebrow labels).
 - No uppercase letter-spaced labels above headings, decorative icons, slogans or "coach" copy, or em-dashes in UI text. **Glass and blur are now allowed** (owner, 10 October 2026, after the friend's redesign): the header, the side menu and the phone bar are see-through and blurred by default, and Hồ sơ has a "Hiển thị" panel with a "Hiệu ứng kính mờ" checkbox that makes them solid white (`body.no-glass`, kept per browser in `localStorage` key `genesense-glass`). The friend's redesign also brought gradients (status panel, login screen, menu icons) and hover effects; the owner has not ruled on those separately.
 - Text is never smaller than 16px. Green, amber and red are only for health status and always come with a word or shape.
 - Safe status wording: **"An toàn"** everywhere (status word, tags, per-value words). The owner shortened it from "Trong ngưỡng an toàn" on 2 October 2026; never "Bình thường".
@@ -96,6 +96,20 @@ GeneSense AI Core is a web app (PWA) for chronic-disease screening and home vita
 - The score is hidden behind "Cách tính kết quả"; the status word is the main result.
 - Numbers use the Vietnamese format: decimal comma, no space before %.
 - **The owner finds the app too wordy and the home page already confusing.** New text must be short: one sentence, no explanation of how a feature works. Do not add blocks to Hôm nay; a new feature gets its own place and at most one link line there. On 2 October 2026 the owner had 24 notes and hints shortened or removed, and kept three as they were: the "Chưa rõ" hint in onboarding, the page footer, and (shortened to its first sentence only) the AI-consent line. The emergency instructions, the "not official" line on the report and the amber "Chữ viết không rõ" warning stay in full.
+
+### Design language (the owner's choice from 10 October 2026)
+
+The look the friend's redesign introduced (PR #24, merged through #25) is the design language from now on. New screens and changes follow it; the rules in "Design direction" above still apply on top of it. Tokens are the CSS variables at the top of `frontend/assets/styles.css`.
+
+- **Feel:** light, airy and blue, calm rather than clinical. Pale blue page (`--bg` #f4f8ff), white panels (`--surface`) with a 1px `--line` (#dbe5f1) border, **16px corners** (`--radius`) and a soft blue-tinted shadow (`.panel`: `0 9px 24px #16345e0d`).
+- **Colour:** brand blue `--blue` (#0756ce) for primary actions, links and the active menu item; text `--ink` (#10264b) and `--ink-2` (#52627a); navy (`--navy`, `--navy-2`) for strong surfaces. Green, amber and red stay reserved for health status and always come with a word or shape.
+- **Glass:** the header (`.app-site-header`), the side menu (`.nav-drawer`, with `.nav-scrim` behind it) and the phone bar (`.mobile-nav`) are translucent with a backdrop blur. On by default; the "Hiệu ứng kính mờ" switch in Hồ sơ makes them solid white (`body.no-glass`).
+- **Gradients:** soft, light blue gradients only, on the header, the status panel (`.status-panel`, white to #eef7ff), the login screen and the menu's icon tiles. No dark or saturated gradients, no gradient text.
+- **Controls:** buttons are 52px tall with 12px corners and bold labels; the primary button is solid blue with a soft blue shadow; inputs have 12px corners; choice chips are 48px tall. Touch targets stay at least 44px.
+- **Navigation:** the GeneSense logo in the header opens a left side menu with an icon tile per destination; on phones a bottom bar holds Hôm nay, Lịch sử, Giấy tờ, Hồ sơ (Di truyền opens from Hồ sơ and the side menu). Icons are the line icons from `frontend/js/icons.js`, set in rounded tiles; they lift slightly on hover or press.
+- **Type:** Be Vietnam Pro, 18px base (`font-size: 112.5%`), line height 1.6. The 16px minimum and the ban on uppercase letter-spaced labels still hold; text the redesign set smaller is a defect to fix, not part of the language.
+- **Motion:** the "Motion" rules below, plus first-view animations for metric cards and charts (off under `prefers-reduced-motion`).
+- **Report:** the doctor's report stays monochrome and form-like; the design language does not apply to it.
 
 ### Account header and profile picture
 
@@ -253,7 +267,7 @@ GeneSense AI Core is a web app (PWA) for chronic-disease screening and home vita
 ### Files
 
 - **`frontend/index.html`:** all screens and dialogs (measuring, reading details, document upload, scan viewer, medicine, profile-picture crop, confirm).
-- **`frontend/assets/styles.css`:** the whole visual system. Be Vietnam Pro, 18px base, CSS variables for colours at the top, flat white panels with 1px borders and 6px corners, yellow focus ring with a dark outer ring, `scrollbar-gutter: stable`, the animations listed in section 4, `.report-*` and `@page` rules for printing, `.ft-*` for the family tree, `.risk-*` and `.genetics-section` for the Di truyền tab, `body.viewing .own-only` to hide write controls.
+- **`frontend/assets/styles.css`:** the whole visual system (see "Design language" in section 4). Be Vietnam Pro, 18px base, CSS variables for colours at the top, white panels with 1px borders, 16px corners and soft shadows, glass header, side menu and phone bar (`body.no-glass` turns the blur off), yellow focus ring with a dark outer ring, `scrollbar-gutter: stable`, the animations listed in section 4, `.report-*` and `@page` rules for printing, `.ft-*` for the family tree, `.risk-*` and `.genetics-section` for the Di truyền tab, `body.viewing .own-only` to hide write controls.
 - **`frontend/js/app.js`:** all UI logic. Useful names:
   - Status: `LEVELS`, `statusOf()`, `isEmergency()`, `levelOf()`, `recentEmergency()` (24-hour amber hold, level `watch`), `pickCurrent()` (the latest reading), `renderDashboard()`, `renderEmergency()`, `renderScores()` (score panel, live from `state.risk`).
   - Readings: `renderMetrics()`, `rangeBar()` and `ZONES`, `renderHistory()` (cards, `state.historyAll`), `showResult()`, `deleteAssessment()`, `vitalsProblem()` (the three reading rules, shared by manual entry and documents), `fromDocument()` and `when()`.
