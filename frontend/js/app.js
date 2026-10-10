@@ -736,7 +736,7 @@ function sharedMedicationPanel() {
     if (!rows.length) return "";
     return '<section class="shared-medicine-slot"><h3>' + label + "</h3><ul>" + rows.map(item =>
       '<li><strong>' + esc(item.name + (item.strength ? " " + item.strength : "")) + '</strong><span>' + esc([item.amount, item.meal === "before" ? "Trước ăn" : item.meal === "after" ? "Sau ăn" : ""].filter(Boolean).join(" · ") || "Theo đơn") + '</span><span class="tag">' +
-      (taken.has(item.id + ":" + slot) ? "Đã ghi nhận đã uống" : "Chưa ghi nhận") + "</span></li>").join("") + "</ul></section>";
+      (taken.has(item.id + ":" + slot) ? "✓ Đã uống" : "Chưa uống") + "</span></li>").join("") + "</ul></section>";
   }).join("");
   const asNeeded = medications.filter(item => !SLOTS.some(([slot]) => item[slot]));
   const needed = asNeeded.length ? '<section class="shared-medicine-slot"><h3>Khi cần</h3><ul>' + asNeeded.map(item =>
@@ -1203,7 +1203,7 @@ function renderMedicines() {
   const taken = new Set((state.medicationIntakes || []).map(row => row.medication_id + ":" + row.slot));
   const item = (m, slot = null) => {
     const checked = slot && taken.has(m.id + ":" + slot);
-    const intake = slot ? '<label class="medicine-intake"><input type="checkbox" data-medication-intake="' + esc(m.id) + '" data-intake-slot="' + slot + '" aria-label="' + esc("Đã uống " + m.name + " buổi " + SLOTS.find(([key]) => key === slot)[1].toLowerCase()) + '"' + (checked ? " checked" : "") + (state.medicationIntakes === null ? " disabled" : "") + '><span>' + (checked ? "Đã ghi nhận" : "Đã uống") + "</span></label>" : "";
+    const intake = slot ? '<label class="medicine-intake"><input type="checkbox" data-medication-intake="' + esc(m.id) + '" data-intake-slot="' + slot + '" aria-label="' + esc("Đã uống " + m.name + " buổi " + SLOTS.find(([key]) => key === slot)[1].toLowerCase()) + '"' + (checked ? " checked" : "") + (state.medicationIntakes === null ? " disabled" : "") + '><span>' + (checked ? "✓ Đã uống" : "Bấm khi đã uống") + "</span></label>" : "";
     return '<li class="medicine-schedule-row"><div><strong>' + title(m) + "</strong>" + (medicineHow(m) ? "<span>" + esc(medicineHow(m)) + "</span>" : "") + (m.note ? '<span class="note">' + esc(m.note) + "</span>" : "") + "</div>" + intake + "</li>";
   };
   const block = (label, rows, current, slot = null) => rows.length ? '<article class="panel slot"><h3>' + label + (current ? ' <span class="tag">Bây giờ</span>' : "") + "</h3><ul>" + rows.map(m => item(m, slot)).join("") + "</ul></article>" : "";
@@ -1256,7 +1256,7 @@ function printMedicineSchedule() {
   const groups = SLOTS.map(([slot, label]) => {
     const rows = active.filter(m => m[slot]);
     return rows.length ? '<section class="medicine-print-group"><h2>' + label + '</h2><ul>' + rows.map(m =>
-      '<li><span><strong>' + esc(m.name + (m.strength ? " " + m.strength : "")) + '</strong><small>' + esc([m.amount, MEALS[m.meal], m.note].filter(Boolean).join(" · ") || "Theo đơn") + '</small></span><span class="medicine-print-status">' + (taken.has(m.id + ":" + slot) ? "✓ Đã ghi nhận" : "□ Chưa ghi nhận") + "</span></li>").join("") + "</ul></section>" : "";
+      '<li><span><strong>' + esc(m.name + (m.strength ? " " + m.strength : "")) + '</strong><small>' + esc([m.amount, MEALS[m.meal], m.note].filter(Boolean).join(" · ") || "Theo đơn") + '</small></span><span class="medicine-print-status">' + (taken.has(m.id + ":" + slot) ? "✓ Đã uống" : "□ Chưa uống") + "</span></li>").join("") + "</ul></section>" : "";
   }).join("");
   const asNeeded = active.filter(m => !SLOTS.some(([slot]) => m[slot]));
   const needed = asNeeded.length ? '<section class="medicine-print-group"><h2>Khi cần</h2><ul>' + asNeeded.map(m =>

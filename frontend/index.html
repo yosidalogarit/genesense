@@ -99,7 +99,7 @@
     </header>
     <button class="nav-scrim" id="nav-scrim" type="button" aria-label="Đóng bảng điều hướng" aria-hidden="true" tabindex="-1"></button>
     <aside class="nav-drawer" id="app-nav-drawer" role="dialog" aria-modal="true" aria-label="Điều hướng chính" aria-hidden="true" tabindex="-1" inert>
-      <div class="nav-drawer-heading"><div class="nav-drawer-brand"><img src="/assets/favicon.svg" width="36" height="36" alt=""><span><strong>GeneSense</strong><small>Chăm sóc sức khỏe</small></span></div><button class="icon-button nav-close" id="nav-close" type="button" aria-label="Đóng bảng điều hướng"><span data-icon="close"></span></button></div>
+      <div class="nav-drawer-heading"><div class="nav-drawer-brand"><img src="/assets/favicon.svg" width="36" height="36" alt=""><span><strong>GeneSense</strong><small>Theo dõi sức khỏe và sàng lọc bệnh mạn tính</small></span></div><button class="icon-button nav-close" id="nav-close" type="button" aria-label="Đóng bảng điều hướng"><span data-icon="close"></span></button></div>
       <nav class="nav-drawer-links" aria-label="Các mục chính">
         <button data-nav="dashboard" class="active"><span class="nav-item-icon" data-icon="grid"></span><span class="nav-item-label">Hôm nay</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="history"><span class="nav-item-icon" data-icon="chart"></span><span class="nav-item-label">Lịch sử đo</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
@@ -107,7 +107,6 @@
         <button data-nav="records" class="own-only"><span class="nav-item-icon" data-icon="document"></span><span class="nav-item-label">Thuốc và giấy tờ</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="profile"><span class="nav-item-icon" data-icon="user"></span><span class="nav-item-label">Hồ sơ</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
       </nav>
-      <p class="nav-drawer-note">Theo dõi sức khỏe của bạn và gia đình, ở một nơi.</p>
     </aside>
     <div id="demo-banner" class="demo-banner hidden">Hồ sơ mẫu, không phải dữ liệu thật.</div>
     <div id="viewing-banner" class="viewing-banner hidden"><span id="viewing-text"></span><button id="exit-viewing" class="btn outline">Về hồ sơ của tôi</button></div>
@@ -190,16 +189,17 @@
       </section>
 
       <section id="records-view" class="view hidden">
-        <div class="page-heading"><div><h1>Thuốc và giấy tờ</h1><p class="lead">Đơn thuốc, giấy khám, giấy ra viện và kết quả xét nghiệm.</p></div><button class="btn primary" id="upload-record">Thêm giấy tờ</button></div>
+        <div class="page-heading"><div><h1>Thuốc và giấy tờ</h1><p class="lead">Đơn thuốc, giấy khám, giấy ra viện và kết quả xét nghiệm.</p></div></div>
         <div class="measurement-tabs" role="group" aria-label="Nội dung trang"><button data-records-tab="medicines">Lịch uống thuốc</button><button data-records-tab="documents">Giấy tờ đã lưu</button></div>
         <div id="medicines-panel" class="records-panel hidden">
           <section class="section" aria-labelledby="medicine-today-title">
-            <div class="section-heading"><h2 id="medicine-today-title">Thuốc hôm nay</h2><div class="heading-actions"><button class="btn outline" id="medicine-print">In lịch</button><button class="btn outline" id="add-medicine">Thêm thuốc</button></div></div>
+            <div class="section-heading"><h2 id="medicine-today-title">Thuốc hôm nay</h2><div class="heading-actions"><button class="btn primary" id="add-medicine"><span data-icon="plus"></span>Thêm thuốc</button><button class="btn outline" data-open-upload>Chụp đơn</button><button class="link-button" id="medicine-print">In lịch</button></div></div>
             <div id="medicine-today"></div>
           </section>
           <details id="medicine-all" class="record-details medicine-all hidden"><summary id="medicine-list-title">Tất cả thuốc</summary><div id="medicine-list"></div></details>
         </div>
         <div id="documents-panel" class="records-panel">
+          <div class="section-heading"><h2>Giấy tờ đã lưu</h2><div class="heading-actions"><button class="btn primary" id="upload-record"><span data-icon="plus"></span>Thêm giấy tờ</button></div></div>
           <p id="records-ai-off" class="note hidden">Phân tích AI hiện chưa khả dụng. Bạn vẫn có thể chụp hoặc chọn ảnh để xem trước; ảnh sẽ không được gửi đi.</p>
           <div id="medical-record-list" class="medical-record-list"></div>
         </div>
