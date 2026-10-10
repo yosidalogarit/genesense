@@ -341,7 +341,7 @@ function navigate(view) {
   state.view = ["dashboard", "records", "history", "genetics", "profile"].includes(view) && !(state.viewing && view === "records") ? view : "dashboard";
   $$(".view").forEach(el => el.classList.toggle("hidden", el.id !== state.view + "-view"));
   $$("nav [data-nav]").forEach(button => {
-    button.classList.toggle("active", button.dataset.nav === state.view);
+    button.classList.toggle("active", button.dataset.nav === state.view || (state.view === "genetics" && button.dataset.nav === "profile" && Boolean(button.closest(".mobile-nav"))));
     if (button.dataset.nav === state.view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
@@ -762,7 +762,8 @@ function renderProfile() {
       "<div><dt>Bệnh đã chẩn đoán</dt><dd>" + esc(conditions.join(", ") || "Không khai báo") + "</dd></div><div><dt>Hút thuốc</dt><dd>" + (p.smoker ? "Có" : "Không") + "</dd></div>" +
       (state.viewing ? "" : "<div><dt>Dùng AI giải thích kết quả</dt><dd>" + (h.ai_consent ? "Đã cho phép" : "Chưa cho phép") + "</dd></div>") +
     "</dl>" + (h.personal_notes ? "<h3>Ghi chú</h3><p>" + esc(h.personal_notes) + "</p>" : "") + "</article>" +
-    '<article class="panel"><h2>Tiền sử bệnh trong gia đình</h2><div class="ft-summary">' + familySummary(h) + '</div><button class="profile-genetics-link" data-nav="genetics"><span class="profile-genetics-icon" data-icon="family"></span><span class="profile-genetics-copy"><strong>Di truyền &amp; tiền sử gia đình</strong><small>Xem sơ đồ gia đình và nguy cơ theo từng bệnh</small></span><span class="profile-genetics-arrow" data-icon="chevron"></span></button></article>' +
+    '<button class="profile-genetics-link profile-genetics-top" data-nav="genetics"><span class="profile-genetics-icon" data-icon="family"></span><span class="profile-genetics-copy"><strong>Di truyền và sơ đồ gia đình</strong><small>Xem nguy cơ theo từng bệnh</small></span><span class="profile-genetics-arrow" data-icon="chevron"></span></button>' +
+    '<article class="panel"><h2>Tiền sử bệnh trong gia đình</h2><div class="ft-summary">' + familySummary(h) + '</div></article>' +
     (state.viewing ? sharedMedicationPanel() : "");
   hydrateIcons($("#profile-content"));
   if (!state.viewing) renderAvatar();
