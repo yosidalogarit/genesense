@@ -789,6 +789,14 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
 .profile-genetics-top { margin: 0 0 24px; }
 .back-to-profile { display: none; }
 @media (max-width: 760px) { .back-to-profile { display: inline-flex; min-height: 44px; margin-bottom: 4px; } }
+.back-to-profile { gap: 2px; color: var(--ink-2); font-weight: 600; text-decoration: none; }
+.back-to-profile .icon { width: 22px; height: 22px; }
+/* On phones the menu cue is just the three lines, in the logo's navy, with no box. */
+@media (max-width: 760px) {
+  .menu-cue { min-width: 44px; min-height: 44px; justify-content: center; padding: 0; border: 0; background: transparent; color: var(--navy); }
+  .menu-cue .icon { width: 26px; height: 26px; }
+  .menu-cue-text { display: none; }
+}
 /* Amber hint under a measuring field whose value is outside the usual range. */
 .field-hint { display: block; margin-top: 4px; color: var(--amber); font-weight: 600; font-size: .889rem; }
 .field-hint::before { content: "▲ "; }
