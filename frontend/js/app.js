@@ -350,7 +350,7 @@ function navigate(view) {
   if (state.view === "profile") renderProfile();
   if (state.view === "genetics") renderGenetics();
   if (state.view === "records") { renderMedicalRecords(); renderRecordsTab(); }
-  if (state.view === "history") { renderHistory(); renderTips(); renderTrends(); }
+  if (state.view === "history") { renderHistory(); renderTips(); renderTrends(); if (!state.viewing) void refreshRecords(); }
   window.scrollTo(0, 0);
 }
 
@@ -652,7 +652,7 @@ function renderWeeklyBloodPressure() {
   const panel = $("#weekly-bp-summary"), summary = state.weeklyBP;
   panel.innerHTML = '<h3>Trung bình huyết áp 7 ngày</h3><p class="note">Phân nhóm theo giờ ghi nhận; chỉ để xem xu hướng.</p>' +
     '<div class="weekly-bp-grid">' + [["Sáng (5–12 giờ)", summary?.morning, "Chưa đo buổi sáng"], ["Tối (17–24 giờ)", summary?.evening, "Chưa đo buổi tối"]].map(([label, group, empty]) =>
-      '<div class="weekly-bp-card"><strong>' + label + '</strong><b>' + (group?.count ? esc(num(group.systolic) + "/" + num(group.diastolic) + " mmHg") : empty) + '</b><span class="note">' + (group?.count ? group.count + " lần đo" : "Trong 7 ngày qua") + "</span></div>").join("") + "</div>";
+      '<div class="weekly-bp-card"><strong>' + label + '</strong><b' + (group?.count ? "" : ' class="empty"') + '>' + (group?.count ? esc(num(group.systolic) + "/" + num(group.diastolic) + " mmHg") : empty) + '</b><span class="note">' + (group?.count ? group.count + " lần đo" : "Trong 7 ngày qua") + "</span></div>").join("") + "</div>";
 }
 function renderHistory() {
   renderPendingReadings();
@@ -977,14 +977,14 @@ function renderCare() {
   $("#care-patients-section").classList.toggle("hidden", !patients.length);
   $("#care-patients").innerHTML = patients.map(patientRow).join("");
   $("#care-panel").innerHTML =
-    "<h2>Chia sẻ với người thân</h2>" +
-    '<p class="note">Người thân đã liên kết chỉ xem được hồ sơ và số đo. Lịch thuốc riêng tư cho đến khi bạn cho phép bên dưới. Bạn có thể thu hồi quyền xem bất cứ lúc nào.</p>' +
-    '<label class="check-label care-medication-sharing"><input id="care-share-medications" type="checkbox"' + (state.health?.share_medications ? " checked" : "") + '><span>Cho phép người thân đã liên kết xem lịch thuốc và trạng thái đã uống.<small>Không chia sẻ giấy tờ hoặc ảnh đơn thuốc.</small></span></label>' +
+    "<h2>Cho người thân xem hồ sơ của bạn</h2>" +
+    '<p class="note">Tạo mã rồi gửi cho con cháu. Họ chỉ xem, không sửa được.</p>' +
     '<button class="btn outline" id="care-create">Tạo mã chia sẻ</button><div id="care-code-box"></div>' +
-    "<h3>Người đang xem được hồ sơ của bạn</h3>" +
+    '<label class="check-label care-medication-sharing"><input id="care-share-medications" type="checkbox"' + (state.health?.share_medications ? " checked" : "") + '><span>Cho xem cả lịch uống thuốc<small>Không gồm giấy tờ và ảnh đơn thuốc.</small></span></label>' +
+    "<h3>Người đang xem hồ sơ của bạn</h3>" +
     (caregivers.length ? '<div class="care-rows">' + caregivers.map(c => '<div class="care-row"><div class="care-row-main"><strong>' + esc(c.display_name) + '</strong><span class="note">Từ ' + esc(date(c.created_at, false)) + '</span></div><button class="delete-record" data-remove-link="' + esc(c.link_id) + '" data-remove-kind="caregiver">Thu hồi</button></div>').join("") + "</div>" : '<p class="note">Chưa chia sẻ với ai.</p>') +
-    "<h3>Theo dõi người thân</h3>" +
-    '<form id="care-form" class="care-form"><label>Nhập mã người thân gửi cho bạn<input id="care-code-input" autocomplete="off" autocapitalize="characters" maxlength="16" required></label><button class="btn primary" type="submit">Liên kết</button></form><p id="care-error" class="inline-message error hidden" role="alert"></p>' +
+    '<div class="care-divider"></div><h2>Xem hồ sơ của người thân</h2>' +
+    '<form id="care-form" class="care-form"><label>Mã người thân gửi cho bạn<input id="care-code-input" autocomplete="off" autocapitalize="characters" maxlength="16" required></label><button class="btn primary" type="submit">Liên kết</button></form><p id="care-error" class="inline-message error hidden" role="alert"></p>' +
     (patients.length ? '<div class="care-rows">' + patients.map(patientRow).join("") + "</div>" : "");
 }
 async function setMedicationSharing(toggle) {
@@ -1951,7 +1951,6 @@ function bindEvents() {
   $("#simulate-ble").addEventListener("click", startSimulation);
   $("#disconnect-device").addEventListener("click", stopStreams);
   $("#save-device").addEventListener("click", () => saveMeasurement(freshValues(), state.deviceSource || "ble", state.samples.slice()));
-  $("#refresh-history").addEventListener("click", refreshRecords);
   $("#open-report").addEventListener("click", openReport);
   $("#report-days").addEventListener("change", renderReport);
   $("#report-print").addEventListener("click", () => window.print());

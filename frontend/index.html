@@ -104,7 +104,7 @@
         <button data-nav="dashboard" class="active"><span class="nav-item-icon" data-icon="grid"></span><span class="nav-item-label">Hôm nay</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="history"><span class="nav-item-icon" data-icon="chart"></span><span class="nav-item-label">Lịch sử đo</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="genetics"><span class="nav-item-icon" data-icon="family"></span><span class="nav-item-label">Di truyền</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
-        <button data-nav="records" class="own-only"><span class="nav-item-icon" data-icon="document"></span><span class="nav-item-label">Thuốc và giấy tờ</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
+        <button data-nav="records" class="own-only"><span class="nav-item-icon" data-icon="pill"></span><span class="nav-item-label">Thuốc</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="profile"><span class="nav-item-icon" data-icon="user"></span><span class="nav-item-label">Hồ sơ</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
       </nav>
     </aside>
@@ -159,12 +159,12 @@
       </section>
 
       <section id="history-view" class="view hidden">
-        <div class="page-heading"><div><h1>Lịch sử đo</h1><p class="lead">Theo dõi những thay đổi qua từng lần đo.</p></div><div class="heading-actions"><button class="link-button" id="refresh-history">Tải lại</button><button class="btn outline" id="open-report"><span data-icon="report"></span>Lập phiếu tổng hợp</button></div></div>
+        <div class="page-heading"><div><h1>Lịch sử đo</h1><p class="lead">Theo dõi những thay đổi qua từng lần đo.</p></div><div class="heading-actions"><button class="btn outline" id="open-report"><span data-icon="report"></span>Lập phiếu<span class="wide-only"> tổng hợp</span></button></div></div>
         <div class="measurement-tabs history-tabs" role="group" aria-label="Cách xem chỉ số"><button class="active" data-history-tab="charts" aria-pressed="true"><span data-icon="chart"></span>Biểu đồ sức khỏe</button><button data-history-tab="readings" aria-pressed="false"><span data-icon="history"></span>Các lần đo</button></div>
         <section id="pending-readings" class="panel pending-readings hidden" aria-labelledby="pending-readings-title"></section>
-        <article id="history-readings-panel" class="panel hidden"><div class="panel-heading"><h2>Các lần đo</h2><label class="inline-select">Hiển thị<select id="history-filter"><option value="all">Tất cả</option><option value="real">Dữ liệu của tôi</option><option value="simulation">Dữ liệu mẫu</option></select></label></div><div id="history-list"></div></article>
+        <article id="history-readings-panel" class="panel hidden"><div class="panel-heading"><h2 class="visually-hidden">Các lần đo</h2><label class="inline-select">Hiển thị<select id="history-filter"><option value="all">Tất cả</option><option value="real">Dữ liệu của tôi</option><option value="simulation">Dữ liệu mẫu</option></select></label></div><div id="history-list"></div></article>
         <section id="history-charts-panel" class="section" aria-labelledby="trend-title">
-          <div class="section-heading"><h2 id="trend-title">Diễn biến chỉ số</h2><p id="chart-context" class="note"></p></div>
+          <div class="section-heading"><h2 id="trend-title" class="visually-hidden">Diễn biến chỉ số</h2><p id="chart-context" class="note"></p></div>
           <p id="chart-help" class="note hidden"></p>
           <article id="weekly-bp-summary" class="panel weekly-bp-summary" aria-live="polite"></article>
           <div class="trend-grid">
@@ -199,7 +199,7 @@
           <details id="medicine-all" class="record-details medicine-all hidden"><summary id="medicine-list-title">Tất cả thuốc</summary><div id="medicine-list"></div></details>
         </div>
         <div id="documents-panel" class="records-panel">
-          <div class="section-heading"><h2>Giấy tờ đã lưu</h2><div class="heading-actions"><button class="btn primary" id="upload-record"><span data-icon="plus"></span>Thêm giấy tờ</button></div></div>
+          <div class="section-heading"><h2 class="visually-hidden">Giấy tờ đã lưu</h2><div class="heading-actions"><button class="btn primary" id="upload-record"><span data-icon="plus"></span>Thêm giấy tờ</button></div></div>
           <p id="records-ai-off" class="note hidden">Phân tích AI hiện chưa khả dụng. Bạn vẫn có thể chụp hoặc chọn ảnh để xem trước; ảnh sẽ không được gửi đi.</p>
           <div id="medical-record-list" class="medical-record-list"></div>
         </div>
@@ -217,7 +217,7 @@
 
       <p class="legal-note">GeneSense hỗ trợ theo dõi sức khỏe, không phải thiết bị y tế và không thay thế chẩn đoán của bác sĩ. Khi có dấu hiệu cấp cứu, gọi 115.</p>
     </main>
-    <nav class="mobile-nav" aria-label="Điều hướng"><button data-nav="dashboard"><span data-icon="grid"></span>Hôm nay</button><button data-nav="history"><span data-icon="history"></span>Lịch sử</button><button data-nav="records" class="own-only"><span data-icon="document"></span>Giấy tờ</button><button data-nav="profile"><span data-icon="user"></span>Hồ sơ</button></nav>
+    <nav class="mobile-nav" aria-label="Điều hướng"><button data-nav="dashboard"><span data-icon="grid"></span>Hôm nay</button><button data-nav="history"><span data-icon="history"></span>Lịch sử</button><button data-nav="records" class="own-only"><span data-icon="pill"></span>Thuốc</button><button data-nav="profile"><span data-icon="user"></span>Hồ sơ</button></nav>
   </div>
 
   <dialog id="measurement-dialog"><div class="dialog-heading"><h2>Ghi chỉ số</h2><button class="icon-button" data-close="measurement-dialog" aria-label="Đóng"><span data-icon="close"></span></button></div>

@@ -172,7 +172,7 @@ def _rule_tips(payload: AssessmentCreate, level: str, alerts: list[AlertItem]) -
                 "Giảm muối giúp hạ huyết áp ở nhiều người.")
         elif "hypertension" in known:
             tip("low", "Giữ nhịp đo huyết áp", "Đo vào cùng giờ mỗi ngày và uống thuốc đúng theo đơn của bác sĩ.",
-                f"Bạn đã khai báo tăng huyết áp; lần này là {reading}, trong ngưỡng theo dõi.")
+                f"Bạn đã khai báo tăng huyết áp; lần này là {reading}, ở mức an toàn.")
         elif family & {"hypertension", "stroke", "cardiovascular"}:
             tip("low", "Đo huyết áp định kỳ", "Đo ít nhất 1 lần mỗi tuần và ghi lại, kể cả khi thấy khỏe.",
                 f"Gia đình có tiền sử tim mạch hoặc huyết áp; lần này là {reading}.")

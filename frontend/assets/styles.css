@@ -178,7 +178,7 @@ body.nav-open { overflow: hidden; }
 .status-word.neutral { color: var(--ink-2); }
 .status-word.neutral::before { border: 3px solid currentColor; background: none; border-radius: 50%; }
 .status-summary { font-size: 1.06rem; margin-bottom: 8px; }
-.status-panel .btn.primary { margin-top: 10px; min-width: 220px; }
+.status-panel .btn.primary { margin-top: 10px; margin-right: 20px; min-width: 220px; }
 .result-alerts { margin: 12px 0 4px; }
 .alert-item { padding: 12px 16px; border-radius: var(--radius); margin-bottom: 8px; background: var(--amber-bg); color: var(--amber); }
 .alert-item.alert { background: var(--red-bg); color: var(--red); }
@@ -402,6 +402,7 @@ ul.medicine-rows { padding: 0 24px; margin-bottom: 24px; }
 .weekly-bp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .weekly-bp-card { display: grid; gap: 2px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
 .weekly-bp-card b { font-size: 1.1rem; }
+.weekly-bp-card b.empty { font-size: 1rem; font-weight: 400; color: var(--ink-2); }
 .weekly-bp-card .note { margin: 0; }
 /* The save button stays in view however long the form above it is. */
 .sticky-actions { position: sticky; bottom: 0; margin-top: 16px; padding: 12px 0; background: #fff; border-top: 1px solid var(--line); }
@@ -802,3 +803,19 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
 .field-hint { display: block; margin-top: 4px; color: var(--amber); font-weight: 600; font-size: .889rem; }
 .field-hint::before { content: "▲ "; }
 #measurement-form input[aria-invalid] { border-color: var(--amber); }
+.care-divider { margin: 28px 0 20px; border-top: 1px solid var(--line); }
+@media (max-width: 760px) {
+  .wide-only { display: none; }
+  #history-view .page-heading { flex-direction: row; align-items: center; }
+  #history-view .page-heading .lead { display: none; }
+  #history-view .page-heading .btn { width: auto; min-height: 44px; padding: 8px 14px; }
+}
+/* On narrow phones the family tree becomes two columns, father's side and mother's side, read top to bottom. */
+@media (max-width: 480px) {
+  .family-tree { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 10px; row-gap: 10px; grid-template-areas: "sp sm" "pgf mgf" "pgm mgm" "fa mo" "ch ch"; }
+  .ft-join { display: none !important; }
+  .ft-children { padding-top: 0; }
+  .ft-children::before { display: none; }
+  .ft-father, .ft-mother { width: 100%; }
+  .ft-node { min-height: 0; padding: 10px; }
+}
