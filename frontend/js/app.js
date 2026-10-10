@@ -19,7 +19,7 @@ const MEMBERS = [
 const METRICS = [
   { key: "systolic", label: "Huyết áp", unit: "mmHg", icon: "pressure" },
   { key: "heart_rate", label: "Nhịp tim", unit: "lần/phút", icon: "heart" },
-  { key: "spo2", label: "Oxy trong máu (SpO₂)", unit: "%", icon: "drop" },
+  { key: "spo2", label: "Oxy trong máu (SpO₂)", unit: "%", icon: "lungs" },
   { key: "glucose", label: "Đường huyết", unit: "mg/dL", icon: "drop" },
 ];
 const KEYS = ["heart_rate", "systolic", "diastolic", "spo2", "glucose"];
@@ -332,7 +332,7 @@ function setNavDrawer(open, restoreFocus = true) {
   drawer.toggleAttribute("inert", !open);
   toggle.setAttribute("aria-expanded", String(open));
   toggle.setAttribute("aria-label", open ? "Đóng bảng điều hướng" : "Mở bảng điều hướng");
-  if (open) (drawer.querySelector(`[data-nav="${state.view}"]`) || drawer).focus({ preventScroll: true });
+  if (open) ($("#nav-close") || drawer).focus({ preventScroll: true });
   else if (restoreFocus && !$("#app-screen").classList.contains("hidden")) toggle.focus({ preventScroll: true });
 }
 
@@ -584,6 +584,7 @@ function renderTrends() {
   // Every source shares one chart: typed-in, Bluetooth and sample readings.
   const rows = state.records.slice(0, 30).reverse();
   $("#chart-context").textContent = source ? "Tối đa 30 lần đo gần nhất" : "";
+  $("#chart-help").textContent = (matchMedia("(hover: hover) and (pointer: fine)").matches ? "Di chuột" : "Chạm") + " vào biểu đồ để xem từng lần đo.";
   $("#chart-help").classList.toggle("hidden", !rows.length);
   for (const [id, spec] of Object.entries(TRENDS)) {
     const card = $('[data-trend="' + id + '"]');
@@ -757,7 +758,7 @@ function renderProfile() {
     '<dl class="facts facts-2col">' +
       "<div><dt>Tuổi</dt><dd>" + p.age + "</dd></div><div><dt>Giới tính</dt><dd>" + sex + "</dd></div>" +
       "<div><dt>Chiều cao</dt><dd>" + num(p.height_cm) + " cm</dd></div><div><dt>Cân nặng</dt><dd>" + num(p.weight_kg) + " kg</dd></div>" +
-      "<div><dt>BMI</dt><dd>" + num(bmi) + ' <span class="fact-note">' + bmiLabel(bmi) + "</span></dd></div><div><dt>Vận động</dt><dd>" + p.activity_minutes_week + " phút mỗi tuần</dd></div>" +
+      "<div><dt>BMI</dt><dd>" + num(bmi) + ' <span class="fact-note">' + bmiLabel(bmi) + " (theo chuẩn châu Á)</span></dd></div><div><dt>Vận động</dt><dd>" + p.activity_minutes_week + " phút mỗi tuần</dd></div>" +
       "<div><dt>Bệnh đã chẩn đoán</dt><dd>" + esc(conditions.join(", ") || "Không khai báo") + "</dd></div><div><dt>Hút thuốc</dt><dd>" + (p.smoker ? "Có" : "Không") + "</dd></div>" +
       (state.viewing ? "" : "<div><dt>Dùng AI giải thích kết quả</dt><dd>" + (h.ai_consent ? "Đã cho phép" : "Chưa cho phép") + "</dd></div>") +
     "</dl>" + (h.personal_notes ? "<h3>Ghi chú</h3><p>" + esc(h.personal_notes) + "</p>" : "") + "</article>" +

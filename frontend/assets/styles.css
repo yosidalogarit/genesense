@@ -134,10 +134,11 @@ body.nav-open { overflow: hidden; }
 .nav-drawer-links { display: grid; gap: 8px; margin-top: 22px; }
 .nav-drawer-links [data-nav] { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 58px; padding: 8px 13px; border: 1px solid transparent; border-radius: 16px; color: var(--ink-2); background: transparent; text-align: left; font-size: .94rem; font-weight: 600; transition: color .2s ease-out, background-color .2s ease-out, border-color .2s ease-out, transform .24s var(--ease-out), box-shadow .2s ease-out; }
 .nav-drawer-links [data-nav]:hover { color: var(--blue); background: #ffffffb8; border-color: #d9e8fa; transform: translateX(3px); }
-.nav-drawer-links [data-nav].active { color: var(--blue); background: #ffffffd9; border-color: #cfe1f8; box-shadow: 0 8px 22px #0756ce12; }
+.nav-drawer-links [data-nav].active { color: #fff; background: var(--blue); border-color: var(--blue); box-shadow: 0 8px 22px #0756ce2e; }
+.nav-drawer-links [data-nav].active:hover { color: #fff; background: var(--blue-hover); }
 .nav-item-icon { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; border: 1px solid #dceaff; border-radius: 13px; color: currentColor; background: linear-gradient(145deg, #f4f8ff, #e5efff); box-shadow: 0 2px 5px #17447710; transform-style: preserve-3d; transition: transform .24s var(--ease-out), box-shadow .24s ease-out, background .24s ease-out; }
 .nav-item-icon .icon { width: 21px; height: 21px; }
-.nav-drawer-links [data-nav].active .nav-item-icon { background: linear-gradient(145deg, #fff, #dceaff); box-shadow: 0 5px 12px #0756ce20, inset 0 1px #ffffff; transform: translateY(-1px); }
+.nav-drawer-links [data-nav].active .nav-item-icon { color: #fff; background: #ffffff2e; border-color: #ffffff59; box-shadow: none; transform: none; }
 .nav-item-arrow { display: grid; place-items: center; margin-left: auto; opacity: 0; transform: translateX(-4px); transition: opacity .2s ease-out, transform .2s ease-out; }
 .nav-item-arrow .icon { width: 18px; height: 18px; }
 .nav-drawer-links [data-nav].active .nav-item-arrow { opacity: .75; transform: translateX(0); }
