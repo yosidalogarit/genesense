@@ -14,7 +14,7 @@ from backend.app import auth
 from backend.app import main
 from backend.app.database import get_session
 from backend.app.migrations import migrate_schema
-from backend.app.models import Assessment, LoginSession, User
+from backend.app.models import Assessment, LoginSession, MedicationIntake, User
 from backend.app.schemas import MedicalDocumentAnalysis
 
 HEADERS = {"X-Requested-With": "HealthPredict", "Origin": "http://localhost:8000"}
@@ -332,6 +332,13 @@ def test_public_trial_login_is_capped_per_hour(client, monkeypatch):
     _as(client, created.cookies[auth.COOKIE_NAME])  # the cookie is Secure, so the http test client needs it set by hand
     assert client.put("/api/profile", json=PROFILE).status_code == 200
     assert client.post("/api/assessments", json=MEASUREMENT).status_code == 201
+    today = datetime.now(timezone.utc).date().isoformat()
+    pill = client.post("/api/medications", json={"name": "Thuốc thử", "start_date": today, "morning": True})
+    assert client.put(f"/api/medications/{pill.json()['id']}/intakes/morning", json={"scheduled_on": today, "taken": True}).status_code == 200
+
+    async def intakes():
+        async with client.db_factory() as session:
+            return await session.scalar(select(func.count()).select_from(MedicationIntake))
 
     async def age_all_but(keep_id, **delta):
         async with client.db_factory() as session:
@@ -351,6 +358,7 @@ def test_public_trial_login_is_capped_per_hour(client, monkeypatch):
     client.cookies.clear()
     assert client.post("/api/auth/demo").status_code == 200
     assert asyncio.run(counts()) == (1, 0)  # the aged account's reading went with it
+    assert asyncio.run(intakes()) == 0  # and its "Đã uống" ticks, which would otherwise block deleting its medicines
     # The switch alone decides: without it, a non-local deployment offers no trial login.
     monkeypatch.setattr(auth.settings, "demo_public", False)
     assert client.post("/api/auth/demo").status_code == 404
