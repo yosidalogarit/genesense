@@ -232,6 +232,8 @@ function date(value, time = true) {
 const NUMBER_FORMAT = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 });
 const num = value => NUMBER_FORMAT.format(value);
 const withUnit = (value, unit) => value + (unit === "%" ? "" : " ") + unit;
+const GLUCOSE_WHEN = { fasting: "lúc đói", after_meal: "sau ăn" };
+const glucoseWhen = (key, values = {}) => key === "glucose" && GLUCOSE_WHEN[values.glucose_context] || "";
 function valueOf(key, values = {}) {
   if (values[key] == null) return "-";
   if (key === "systolic") return Math.round(values.systolic) + "/" + (values.diastolic == null ? "-" : Math.round(values.diastolic));
@@ -491,12 +493,13 @@ function placeRanges(root) {
 function renderMetrics() {
   const values = state.result?.measured_vitals || {};
   const grid = $("#metric-grid");
+  $("#range-key").classList.toggle("hidden", !METRICS.some(m => values[m.key] != null));
   grid.querySelectorAll(".reveal-pending").forEach(card => panelRevealObserver?.unobserve(card));
   grid.innerHTML = METRICS.map(m => {
     const [level, status] = statusOf(m.key, values);
     const measured = values[m.key] != null;
     const flag = measured ? '<span class="reading-flag tag ' + level + '">' + status + '</span>' : '<span class="reading-placeholder">Chưa có số đo được ghi</span>';
-    return '<div class="reading"><span class="metric-icon">' + icon(m.icon) + '</span><span class="reading-name">' + m.label + '</span>' + (measured ? '<span class="reading-value">' + valueOf(m.key, values) + '<small>' + m.unit + '</small></span>' + rangeBar(m.key, values[m.key]) : '<span class="reading-value empty">Chưa đo</span>') + flag + '</div>';
+    return '<div class="reading"><span class="metric-icon">' + icon(m.icon) + '</span><span class="reading-name">' + m.label + (glucoseWhen(m.key, values) ? " <small>" + glucoseWhen(m.key, values) + "</small>" : "") + '</span>' + (measured ? '<span class="reading-value">' + valueOf(m.key, values) + '<small>' + m.unit + '</small></span>' + rangeBar(m.key, values[m.key]) : '<span class="reading-value empty">Chưa đo</span>') + flag + '</div>';
   }).join("");
   placeRanges(grid);
   // Keep emergency values immediately readable; other cards enter only on their first viewport visit.
@@ -694,7 +697,7 @@ function renderHistory() {
     const level = recordLevel(record);
     const values = METRICS.filter(m => record.vitals[m.key] != null).map(m => {
       const [mark, word] = statusOf(m.key, record.vitals);
-      return '<li><span class="value-mark ' + mark + '" aria-hidden="true"></span><span>' + (m.key === "spo2" ? "SpO₂" : m.label) + '</span><strong>' + esc(withUnit(valueOf(m.key, record.vitals), m.unit)) + '</strong><span class="visually-hidden">, ' + esc(word.toLowerCase()) + "</span></li>";
+      return '<li><span class="value-mark ' + mark + '" aria-hidden="true"></span><span>' + (m.key === "spo2" ? "SpO₂" : m.label) + (glucoseWhen(m.key, record.vitals) ? " (" + glucoseWhen(m.key, record.vitals) + ")" : "") + '</span><strong>' + esc(withUnit(valueOf(m.key, record.vitals), m.unit)) + '</strong><span class="visually-hidden">, ' + esc(word.toLowerCase()) + "</span></li>";
     }).join("");
     return '<li class="reading-card"><div class="reading-card-head"><div><strong>' + esc(when(record)) + '</strong><span class="source">' + esc(SOURCE_NAMES[record.vitals.source || "manual"]) + '</span></div><span class="tag ' + (level === "emergency" ? "alert" : level) + '">' + LEVELS[level] + "</span></div><ul>" + values +
       '</ul><button class="link-button" data-record="' + esc(record.id) + '">Xem chi tiết</button></li>';
@@ -850,7 +853,7 @@ function renderGenetics() {
     : raised.length ? raised.length + " bệnh có người thân mắc" + (high ? ", trong đó " + high + " ở mức cao." : ".") : "Chưa ghi nhận bệnh nào có người thân mắc.";
   // The disease name comes first in the markup so heading navigation reads name then level; CSS shows the level strip on top.
   const card = row => { const level = RISK_LEVELS[row.level]; return '<article class="risk-card ' + level.tone + '"><div class="risk-card-body"><h3>' + conditionName(row.condition) + '<span class="visually-hidden">, ' + (level.bars ? "mức " : "") + level.label.toLowerCase() + "</span></h3>" +
-    (row.level === "diagnosed" ? "<p>Bệnh này đã có trong hồ sơ cá nhân.</p>" : "") + riskWho(row) + (row.advice ? '<p class="risk-do"><strong>Nên làm:</strong> ' + esc(row.advice) + "</p>" : "") +
+    (row.level === "diagnosed" ? "<p>Bệnh này đã có trong hồ sơ cá nhân.</p>" : "") + riskWho(row) + (row.advice ? (matchMedia("(max-width: 760px)").matches ? '<details class="record-details risk-do-fold"><summary>Nên làm</summary><p class="risk-do">' + esc(row.advice) + "</p></details>" : '<p class="risk-do"><strong>Nên làm:</strong> ' + esc(row.advice) + "</p>") : "") +
     '</div><div class="risk-card-top" aria-hidden="true">' + riskLevel(row.level) + (level.bars ? riskMeter(row.level) : "") + "</div></article>"; };
   const section = (id, title, body, action = "") => '<section class="section genetics-section" aria-labelledby="genetics-' + id + '"><div class="section-heading"><h2 id="genetics-' + id + '">' + title + "</h2>" + action + "</div>" + body + "</section>";
   const key = '<div class="panel risk-key"><h3>Cách đọc mức nguy cơ</h3><ul>' +
@@ -918,7 +921,7 @@ function renderReport() {
   const code = "GS-" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + "-" + pad(now.getHours()) + pad(now.getMinutes());
   const bmi = p.weight_kg / (p.height_cm / 100) ** 2;
   const sex = { female: "Nữ", male: "Nam", other: "Không khai báo" }[p.sex] || "Không khai báo";
-  const cell = (key, v) => v[key] == null ? "" : valueOf(key, v);
+  const cell = (key, v) => v[key] == null ? "" : valueOf(key, v) + (glucoseWhen(key, v) ? " (" + glucoseWhen(key, v) + ")" : "");
   const mark = v => { const levels = METRICS.map(m => statusOf(m.key, v)[0]); return levels.includes("alert") ? "Nguy hiểm" : levels.includes("attention") ? "Cần chú ý" : ""; };
   const family = MEMBERS.map(m => {
     const saved = h.family_history.find(row => row.member_id === m.id);
@@ -1724,6 +1727,7 @@ async function submitManual(event) {
   if (!checkFields(form)) return;
   const data = new FormData(form);
   const values = Object.fromEntries(KEYS.map(key => [key, data.get(key)?.trim() ? Number(data.get(key)) : null]));
+  if (values.glucose != null && data.get("glucose_context")) values.glucose_context = data.get("glucose_context");
   let takenAt = null;
   if (data.get("when") === "earlier") {
     const input = form.elements.measured_at;

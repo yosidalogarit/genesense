@@ -49,6 +49,14 @@ class VitalSample(BaseModel):
     diastolic: float | None = Field(default=None, ge=30, le=180)
     spo2: float | None = Field(default=None, ge=50, le=100)
     glucose: float | None = Field(default=None, ge=20, le=600)
+    # Shown with the reading only; the safety ranges are the same for every context (clinical review pending).
+    glucose_context: Literal["fasting", "after_meal"] | None = None
+
+    @model_validator(mode="after")
+    def context_needs_glucose(self):
+        if self.glucose is None:
+            self.glucose_context = None
+        return self
 
 
 class AssessmentCreate(BaseModel):
