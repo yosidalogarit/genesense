@@ -546,9 +546,11 @@ function renderTips() {
   const daily = dailyTip();
   const cards = tips.slice(0, 4).map(tip => tipCard(tip, tipImage(tip)));
   const dailyCard = tipCard(daily, tipImage(daily), "Gợi ý hôm nay");
-  const more = cards.slice(1);
-  $("#tip-list").innerHTML = more.join("");
+  // Lịch sử leaves out what Hôm nay shows, except in an emergency, when Hôm nay hides its tips.
+  const emergency = isEmergency(state.result);
+  $("#tip-list").innerHTML = emergency ? cards.join("") + dailyCard : cards.slice(1).join("");
   $("#tip-more").textContent = (cards[0] ? 2 : 1) + " lời khuyên khác ở trang Hôm nay.";
+  $("#tip-more").classList.toggle("hidden", emergency);
   // Today shows only the top personal tip and the daily one; advice must not compete with the emergency panel.
   $("#today-tips").innerHTML = (cards[0] || "") + dailyCard;
   $("#today-advice").classList.toggle("hidden", isEmergency(state.result));
@@ -1747,6 +1749,7 @@ function clearAccount() {
   setAvatar(null);
   if (state.scanUrl) URL.revokeObjectURL(state.scanUrl);
   state.scanUrl = null; $("#scan-image").removeAttribute("src"); $("#scan-save").removeAttribute("href");
+  reportLayer = false;
   state.user = null; state.health = null; state.records = []; state.result = null; state.risk = null; state.weeklyBP = null; state.riskFailed = false; state.medicalRecords = []; state.medications = []; state.medicationIntakes = null; state.pendingAssessments = []; state.viewingMedications = null; state.recordsTab = null; state.historyAll = false; state.editing = false; state.rating = 0;
   renderSyncStatus();
   resetMedicalUpload();
