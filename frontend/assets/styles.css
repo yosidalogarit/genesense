@@ -303,13 +303,13 @@ body.nav-open { overflow: hidden; }
 .chart-axis { fill: var(--ink-2); font-size: 16px; font-variant-numeric: tabular-nums; }
 .chart-value { fill: var(--ink); font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .chart-cross { stroke: var(--line-strong); stroke-width: 1; }
-.chart-threshold { stroke-width: 1.5; stroke-dasharray: 5 4; }
+.chart-threshold { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 1.5 4; stroke-linecap: round; }
 .chart-svg.chart-animate .chart-series-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: chart-trace .9s ease-out forwards; }
 .chart-svg.chart-animate .chart-series-point { transform-box: fill-box; transform-origin: center; animation: chart-point-in .35s var(--ease-out) .72s both; }
 .chart-svg.chart-animate .chart-value { animation: fade-in .3s ease-out .72s both; }
 @keyframes chart-trace { to { stroke-dashoffset: 0; } }
 @keyframes chart-point-in { from { opacity: 0; transform: scale(.55); } to { opacity: 1; transform: scale(1); } }
-.trend-legend .key-limit { height: 0; border-top: 2px dashed var(--ink-2); background: none; }
+.trend-legend .key-limit { height: 0; border-top: 3px dotted var(--ink-2); background: none; }
 .chart-tip { position: absolute; top: 0; z-index: 2; pointer-events: none; max-width: calc(100% - 8px); padding: 8px 12px; font-size: .889rem; background: #fff; border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: 0 4px 12px #0d2c541f; }
 .chart-tip-date { color: var(--ink-2); }
 .chart-tip-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
@@ -843,3 +843,5 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
   #medicines-panel .heading-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
   #medicines-panel .heading-actions .btn { width: 100%; }
 }
+.menu-page { display: none; }
+@media (min-width: 761px) { .menu-page { display: inline; margin-right: 8px; font-weight: 600; color: var(--ink); } }

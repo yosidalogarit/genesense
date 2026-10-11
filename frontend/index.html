@@ -94,7 +94,7 @@
   </section>
 
   <div id="app-screen" class="app-shell hidden">
-    <header class="site-header app-site-header"><div class="site-header-inner"><button class="brand brand-toggle" id="sidebar-toggle" type="button" aria-label="Mở menu" aria-controls="app-nav-drawer" aria-expanded="false"><span class="menu-cue" aria-hidden="true"><span data-icon="menu"></span><span class="menu-cue-text">Menu</span></span><img src="/assets/favicon.svg" width="36" height="36" alt=""><span><strong>GeneSense</strong><small>Theo dõi sức khỏe và sàng lọc bệnh mạn tính</small></span></button>
+    <header class="site-header app-site-header"><div class="site-header-inner"><button class="brand brand-toggle" id="sidebar-toggle" type="button" aria-label="Mở menu" aria-controls="app-nav-drawer" aria-expanded="false"><span class="menu-cue" aria-hidden="true"><span data-icon="menu"></span><span class="menu-cue-text">Menu</span></span><span id="menu-page" class="menu-page"></span><img src="/assets/favicon.svg" width="36" height="36" alt=""><span><strong>GeneSense</strong><small>Theo dõi sức khỏe và sàng lọc bệnh mạn tính</small></span></button>
       <a class="header-account" id="account-link" href="#profile"><span class="avatar" data-avatar aria-hidden="true"></span><span class="visually-hidden">Hồ sơ của </span><span class="header-name" data-user-name></span></a></div>
     </header>
     <button class="nav-scrim" id="nav-scrim" type="button" aria-label="Đóng bảng điều hướng" aria-hidden="true" tabindex="-1"></button>
@@ -159,7 +159,7 @@
       </section>
 
       <section id="history-view" class="view hidden">
-        <div class="page-heading"><div><h1>Lịch sử đo</h1><p class="lead">Theo dõi những thay đổi qua từng lần đo.</p></div><div class="heading-actions"><button class="btn outline" id="open-report"><span data-icon="report"></span>Lập phiếu<span class="wide-only"> tổng hợp</span></button></div></div>
+        <div class="page-heading"><div><h1>Lịch sử đo</h1><p class="lead">Theo dõi những thay đổi qua từng lần đo.</p></div><div class="heading-actions"><button class="btn outline" id="open-report"><span data-icon="report"></span>Lập phiếu<span class="wide-only">tổng hợp</span></button></div></div>
         <div class="measurement-tabs history-tabs" role="group" aria-label="Cách xem chỉ số"><button class="active" data-history-tab="charts" aria-pressed="true"><span data-icon="chart"></span>Biểu đồ</button><button data-history-tab="readings" aria-pressed="false"><span data-icon="history"></span>Các lần đo</button></div>
         <section id="pending-readings" class="panel pending-readings hidden" aria-labelledby="pending-readings-title"></section>
         <article id="history-readings-panel" class="panel hidden"><div class="panel-heading"><h2 class="visually-hidden">Các lần đo</h2><label class="inline-select">Hiển thị<select id="history-filter"><option value="all">Tất cả</option><option value="real">Dữ liệu của tôi</option><option value="simulation">Dữ liệu mẫu</option></select></label></div><div id="history-list"></div></article>
@@ -172,7 +172,7 @@
             <article class="panel trend-card" data-trend="spo2"><div class="trend-head"><h3>Oxy trong máu <small>SpO₂, %</small></h3><p class="trend-latest"></p></div><div class="trend-chart" tabindex="0" aria-describedby="trend-spo2-summary"></div><p class="trend-empty note">Chưa có lần đo SpO₂.</p><p id="trend-spo2-summary" class="visually-hidden"></p></article>
             <article class="panel trend-card" data-trend="glucose"><div class="trend-head"><h3>Đường huyết <small>mg/dL</small></h3><p class="trend-latest"></p></div><div class="trend-chart" tabindex="0" aria-describedby="trend-glucose-summary"></div><p class="trend-empty note">Chưa có lần đo đường huyết.</p><p id="trend-glucose-summary" class="visually-hidden"></p></article>
           </div>
-          <p class="note">Nền xanh: ngưỡng an toàn. Nét đứt: ngưỡng cao. ▲: vượt ngưỡng.</p>
+          <p class="note">Nền xanh: ngưỡng an toàn. Nét chấm: ngưỡng cao. ▲: vượt ngưỡng.</p>
           <p id="chart-context" class="note"></p>
           <article id="weekly-bp-summary" class="panel weekly-bp-summary" aria-live="polite"></article>
         </section>

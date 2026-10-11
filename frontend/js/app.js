@@ -357,7 +357,9 @@ function navigate(view) {
     if (button.dataset.nav === state.view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  document.title = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Di truyền", profile: "Hồ sơ" }[state.view] + " - GeneSense";
+  const pageName = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Di truyền", profile: "Hồ sơ" }[state.view];
+  document.title = pageName + " - GeneSense";
+  $("#menu-page").textContent = pageName;
   window.history.replaceState(null, "", "#" + state.view);
   if (state.view === "profile") renderProfile();
   if (state.view === "genetics") renderGenetics();
@@ -824,9 +826,10 @@ function renderScores() {
   if (!s) return;
   const unknown = state.risk?.relatives_unknown || 0;
   $("#risk-score").textContent = s.overall == null ? "-" : Math.round(s.overall);
-  $("#pgrs-score").textContent = state.risk && unknown === state.risk.relatives_total ? "Chưa rõ" : Math.round(s.pgrs);
-  $("#brs-score").textContent = Math.round(s.brs);
-  $("#vital-score").textContent = s.vitals == null ? "-" : Math.round(s.vitals);
+  const of100 = v => Math.round(v) + "/100";
+  $("#pgrs-score").textContent = state.risk && unknown === state.risk.relatives_total ? "Chưa rõ" : of100(s.pgrs);
+  $("#brs-score").textContent = of100(s.brs);
+  $("#vital-score").textContent = s.vitals == null ? "-" : of100(s.vitals);
   $("#score-family-note").textContent = unknown ? "Còn " + unknown + " người thân chưa rõ tiền sử, chưa được tính vào điểm tiền sử gia đình." : "";
   $("#score-family-note").classList.toggle("hidden", !unknown);
 }
