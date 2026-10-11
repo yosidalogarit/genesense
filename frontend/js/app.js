@@ -19,7 +19,7 @@ const MEMBERS = [
 const METRICS = [
   { key: "systolic", label: "Huyết áp", unit: "mmHg", icon: "pressure" },
   { key: "heart_rate", label: "Nhịp tim", unit: "lần/phút", icon: "heart" },
-  { key: "spo2", label: "Oxy trong máu (SpO₂)", unit: "%", icon: "drop" },
+  { key: "spo2", label: "Oxy trong máu (SpO₂)", unit: "%", icon: "lungs" },
   { key: "glucose", label: "Đường huyết", unit: "mg/dL", icon: "drop" },
 ];
 const KEYS = ["heart_rate", "systolic", "diastolic", "spo2", "glucose"];
@@ -182,6 +182,15 @@ function toast(text, type = "") {
     setTimeout(() => el.remove(), 400);
   }, 4500);
 }
+// Phone Back closes the dialog or report on top instead of leaving the page: each one opens a history entry,
+// and closing it any other way takes that entry back off.
+let layerCount = 0, layerPops = 0, reportLayer = false;
+function openDialog(dialog) {
+  dialog.showModal();
+  dialog.dataset.layer = String(++layerCount);
+  history.pushState({ layer: true }, "");
+}
+function dropLayer() { layerPops++; history.back(); }
 // Plays the exit animation before the native close, so "close" listeners still fire once, at the end.
 function closeDialog(dialog) {
   if (!dialog.open || dialog.classList.contains("closing")) return;
@@ -199,7 +208,7 @@ function confirmAction(title, body = "Không thể khôi phục sau khi xóa.", 
   $("#confirm-ok").className = "btn " + (danger ? "danger" : "primary");
   $("#confirm-no").textContent = cancel;
   dialog.returnValue = ""; // Esc closes without a value, so an earlier "yes" must not count again
-  dialog.showModal();
+  openDialog(dialog);
   return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "yes"), { once: true }));
 }
 function errorAt(id, text = "") {
@@ -228,6 +237,9 @@ function valueOf(key, values = {}) {
   if (key === "systolic") return Math.round(values.systolic) + "/" + (values.diastolic == null ? "-" : Math.round(values.diastolic));
   return key === "spo2" ? num(values[key]) : Math.round(values[key]).toString();
 }
+// On the blood-pressure chart each line is judged by its own number, so a high diastolic marks the diastolic line.
+const chartStatus = (key, v) => key === "systolic" ? statusOf("systolic", { systolic: v.systolic, diastolic: 0 })[0]
+  : key === "diastolic" ? statusOf("systolic", { systolic: 0, diastolic: v.diastolic })[0] : statusOf(key, v)[0];
 function statusOf(key, v) {
   if (v[key] == null) return ["neutral", "Chưa đo"];
   const n = v[key];
@@ -285,7 +297,7 @@ async function chooseAvatar(file) {
   Object.assign(crop, { zoom: 1, x: (CROP - crop.image.width * fit) / 2, y: (CROP - crop.image.height * fit) / 2 });
   $("#avatar-zoom").value = 1;
   drawCrop();
-  $("#avatar-dialog").showModal();
+  openDialog($("#avatar-dialog"));
 }
 // Only a 256px JPEG of the chosen area leaves the device.
 async function saveAvatar() {
@@ -331,8 +343,8 @@ function setNavDrawer(open, restoreFocus = true) {
   scrim.setAttribute("aria-hidden", String(!open));
   drawer.toggleAttribute("inert", !open);
   toggle.setAttribute("aria-expanded", String(open));
-  toggle.setAttribute("aria-label", open ? "Đóng bảng điều hướng" : "Mở bảng điều hướng");
-  if (open) (drawer.querySelector(`[data-nav="${state.view}"]`) || drawer).focus({ preventScroll: true });
+  toggle.setAttribute("aria-label", open ? "Đóng menu" : "Mở menu");
+  if (open) ($("#nav-close") || drawer).focus({ preventScroll: true });
   else if (restoreFocus && !$("#app-screen").classList.contains("hidden")) toggle.focus({ preventScroll: true });
 }
 
@@ -345,12 +357,14 @@ function navigate(view) {
     if (button.dataset.nav === state.view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  document.title = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Di truyền", profile: "Hồ sơ" }[state.view] + " - GeneSense";
+  const pageName = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Di truyền", profile: "Hồ sơ" }[state.view];
+  document.title = pageName + " - GeneSense";
+  $("#menu-page").textContent = pageName;
   window.history.replaceState(null, "", "#" + state.view);
   if (state.view === "profile") renderProfile();
   if (state.view === "genetics") renderGenetics();
   if (state.view === "records") { renderMedicalRecords(); renderRecordsTab(); }
-  if (state.view === "history") { renderHistory(); renderTips(); renderTrends(); }
+  if (state.view === "history") { renderHistory(); renderTips(); renderTrends(); if (!state.viewing) void refreshRecords(); }
   window.scrollTo(0, 0);
 }
 
@@ -460,7 +474,13 @@ function rangeBar(key, value) {
   const scale = ZONES[key];
   const pos = v => ((Math.min(scale.max, Math.max(scale.min, v)) - scale.min) / (scale.max - scale.min) * 100).toFixed(1);
   // Positions travel as data attributes and are applied by placeRanges(): the Content-Security-Policy blocks style attributes.
-  return '<div class="range" aria-hidden="true">' + scale.zones.map(([from, to, level]) => '<span class="range-zone ' + level + '" data-left="' + pos(from) + '" data-width="' + (pos(to) - pos(from)).toFixed(1) + '"></span>').join("") + '<span class="range-mark" data-left="' + pos(value) + '"></span></div>';
+  return '<div class="range" aria-hidden="true">' + scale.zones.map(([from, to, level]) => '<span class="range-zone ' + level + '" data-left="' + pos(from) + '" data-width="' + (pos(to) - pos(from)).toFixed(1) + '"></span>').join("") + '<span class="range-mark" data-left="' + pos(value) + '"></span>' + rangeTicks(scale, pos) + "</div>";
+}
+function rangeTicks(scale, pos) {
+  const edges = scale.zones.slice(1).map(([from], i) => ({ value: from, safe: scale.zones[i][2] === "safe" || scale.zones[i + 1][2] === "safe" }));
+  const shown = [];
+  [...edges.filter(e => e.safe), ...edges.filter(e => !e.safe)].forEach(e => { if (shown.every(s => Math.abs(pos(s) - pos(e.value)) >= 14)) shown.push(e.value); });
+  return shown.map(v => '<span class="range-tick" data-left="' + pos(v) + '">' + num(v) + "</span>").join("");
 }
 function placeRanges(root) {
   root.querySelectorAll("[data-left]").forEach(el => {
@@ -523,12 +543,14 @@ function renderTips() {
   const daily = dailyTip();
   const cards = tips.slice(0, 4).map(tip => tipCard(tip, tipImage(tip)));
   const dailyCard = tipCard(daily, tipImage(daily), "Gợi ý hôm nay");
-  $("#tip-list").innerHTML = cards.join("") + dailyCard;
+  const more = cards.slice(1);
+  $("#tip-list").innerHTML = more.join("");
+  $("#tip-more").textContent = (cards[0] ? 2 : 1) + " lời khuyên khác ở trang Hôm nay.";
   // Today shows only the top personal tip and the daily one; advice must not compete with the emergency panel.
   $("#today-tips").innerHTML = (cards[0] || "") + dailyCard;
   $("#today-advice").classList.toggle("hidden", isEmergency(state.result));
   // During the 24h watch window the stored "all fine" follow-up would contradict Today.
-  const followUp = state.result && !isEmergency(state.result) && recentEmergency() ? "" : state.result?.insight.follow_up || "";
+  const followUp = state.result && !isEmergency(state.result) && recentEmergency() || state.result?.risk_level === "safe" ? "" : state.result?.insight.follow_up || "";
   $("#follow-up").textContent = followUp;
   $("#follow-up").classList.toggle("hidden", !followUp);
 }
@@ -584,6 +606,7 @@ function renderTrends() {
   // Every source shares one chart: typed-in, Bluetooth and sample readings.
   const rows = state.records.slice(0, 30).reverse();
   $("#chart-context").textContent = source ? "Tối đa 30 lần đo gần nhất" : "";
+  $("#chart-help").textContent = (matchMedia("(hover: hover) and (pointer: fine)").matches ? "Di chuột" : "Chạm") + " vào biểu đồ để xem từng lần đo.";
   $("#chart-help").classList.toggle("hidden", !rows.length);
   for (const [id, spec] of Object.entries(TRENDS)) {
     const card = $('[data-trend="' + id + '"]');
@@ -600,7 +623,8 @@ function renderTrends() {
     if (!points.length) continue;
     trendCharts[id] ||= new TrendChart(host);
     trendCharts[id].set({ unit: spec.unit, band: spec.band, thresholds: spec.thresholds, min: spec.min, max: spec.max, times: points.map(row => toDate(row.created_at)),
-      series: spec.series.map(([key, label, color]) => ({ label, color, values: points.map(row => chartValue(key, row.vitals[key])) })) });
+      series: spec.series.map(([key, label, color]) => ({ label, color, dash: key === "diastolic" ? "10 6" : null, values: points.map(row => chartValue(key, row.vitals[key])),
+        flags: points.map(row => ["attention", "alert"].includes(chartStatus(key, row.vitals))) })) });
   }
 }
 function pickCurrent(rows) {
@@ -651,7 +675,7 @@ function renderWeeklyBloodPressure() {
   const panel = $("#weekly-bp-summary"), summary = state.weeklyBP;
   panel.innerHTML = '<h3>Trung bình huyết áp 7 ngày</h3><p class="note">Phân nhóm theo giờ ghi nhận; chỉ để xem xu hướng.</p>' +
     '<div class="weekly-bp-grid">' + [["Sáng (5–12 giờ)", summary?.morning, "Chưa đo buổi sáng"], ["Tối (17–24 giờ)", summary?.evening, "Chưa đo buổi tối"]].map(([label, group, empty]) =>
-      '<div class="weekly-bp-card"><strong>' + label + '</strong><b>' + (group?.count ? esc(num(group.systolic) + "/" + num(group.diastolic) + " mmHg") : empty) + '</b><span class="note">' + (group?.count ? group.count + " lần đo" : "Trong 7 ngày qua") + "</span></div>").join("") + "</div>";
+      '<div class="weekly-bp-card"><strong>' + label + '</strong><b' + (group?.count ? "" : ' class="empty"') + '>' + (group?.count ? esc(num(group.systolic) + "/" + num(group.diastolic) + " mmHg") : empty) + '</b><span class="note">' + (group?.count ? group.count + " lần đo" : "Trong 7 ngày qua") + "</span></div>").join("") + "</div>";
 }
 function renderHistory() {
   renderPendingReadings();
@@ -695,7 +719,7 @@ async function showResult(id) {
     const level = levelOf(r);
     $("#result-detail").innerHTML = '<p class="note">' + (fromDocument(r) ? "Ghi trên giấy tờ ngày " + when(r) : "Đo lúc " + when(r) + ", " + esc(SOURCE_NAMES[r.measurement_source].toLowerCase())) + '</p><span class="tag ' + (level === "emergency" ? "alert" : level) + '">' + LEVELS[level] + "</span>" + (level === "emergency" && !fromDocument(r) ? '<p class="detail-gap"><a class="btn danger" href="tel:115">Gọi cấp cứu 115</a></p>' : "") + '<p class="detail-gap">' + (fromDocument(r) ? "Số liệu cũ từ giấy tờ." : esc(r.insight.summary)) + '</p><div class="result-detail-vitals">' + METRICS.map(m => "<div><span>" + m.label + "</span><strong>" + (r.measured_vitals?.[m.key] == null ? "Chưa đo" : withUnit(valueOf(m.key, r.measured_vitals), m.unit)) + "</strong></div>").join("") + "</div>" + (fromDocument(r) ? "" : alertsMarkup(r) + (r.insight.follow_up ? '<p class="note">' + esc(r.insight.follow_up) + "</p>" : ""));
     $("#delete-assessment").dataset.id = r.id;
-    $("#result-dialog").showModal();
+    openDialog($("#result-dialog"));
   } catch (error) { toast(error.message, "error"); }
 }
 function bmiLabel(bmi) {
@@ -736,7 +760,7 @@ function sharedMedicationPanel() {
     if (!rows.length) return "";
     return '<section class="shared-medicine-slot"><h3>' + label + "</h3><ul>" + rows.map(item =>
       '<li><strong>' + esc(item.name + (item.strength ? " " + item.strength : "")) + '</strong><span>' + esc([item.amount, item.meal === "before" ? "Trước ăn" : item.meal === "after" ? "Sau ăn" : ""].filter(Boolean).join(" · ") || "Theo đơn") + '</span><span class="tag">' +
-      (taken.has(item.id + ":" + slot) ? "Đã ghi nhận đã uống" : "Chưa ghi nhận") + "</span></li>").join("") + "</ul></section>";
+      (taken.has(item.id + ":" + slot) ? "✓ Đã uống" : "Chưa uống") + "</span></li>").join("") + "</ul></section>";
   }).join("");
   const asNeeded = medications.filter(item => !SLOTS.some(([slot]) => item[slot]));
   const needed = asNeeded.length ? '<section class="shared-medicine-slot"><h3>Khi cần</h3><ul>' + asNeeded.map(item =>
@@ -757,7 +781,7 @@ function renderProfile() {
     '<dl class="facts facts-2col">' +
       "<div><dt>Tuổi</dt><dd>" + p.age + "</dd></div><div><dt>Giới tính</dt><dd>" + sex + "</dd></div>" +
       "<div><dt>Chiều cao</dt><dd>" + num(p.height_cm) + " cm</dd></div><div><dt>Cân nặng</dt><dd>" + num(p.weight_kg) + " kg</dd></div>" +
-      "<div><dt>BMI</dt><dd>" + num(bmi) + ' <span class="fact-note">' + bmiLabel(bmi) + "</span></dd></div><div><dt>Vận động</dt><dd>" + p.activity_minutes_week + " phút mỗi tuần</dd></div>" +
+      "<div><dt>BMI</dt><dd>" + num(bmi) + ' <span class="fact-note">' + bmiLabel(bmi) + " (theo chuẩn châu Á)</span></dd></div><div><dt>Vận động</dt><dd>" + p.activity_minutes_week + " phút mỗi tuần</dd></div>" +
       "<div><dt>Bệnh đã chẩn đoán</dt><dd>" + esc(conditions.join(", ") || "Không khai báo") + "</dd></div><div><dt>Hút thuốc</dt><dd>" + (p.smoker ? "Có" : "Không") + "</dd></div>" +
       (state.viewing ? "" : "<div><dt>Dùng AI giải thích kết quả</dt><dd>" + (h.ai_consent ? "Đã cho phép" : "Chưa cho phép") + "</dd></div>") +
     "</dl>" + (h.personal_notes ? "<h3>Ghi chú</h3><p>" + esc(h.personal_notes) + "</p>" : "") + "</article>" +
@@ -802,9 +826,10 @@ function renderScores() {
   if (!s) return;
   const unknown = state.risk?.relatives_unknown || 0;
   $("#risk-score").textContent = s.overall == null ? "-" : Math.round(s.overall);
-  $("#pgrs-score").textContent = state.risk && unknown === state.risk.relatives_total ? "Chưa rõ" : Math.round(s.pgrs);
-  $("#brs-score").textContent = Math.round(s.brs);
-  $("#vital-score").textContent = s.vitals == null ? "-" : Math.round(s.vitals);
+  const of100 = v => Math.round(v) + "/100";
+  $("#pgrs-score").textContent = state.risk && unknown === state.risk.relatives_total ? "Chưa rõ" : of100(s.pgrs);
+  $("#brs-score").textContent = of100(s.brs);
+  $("#vital-score").textContent = s.vitals == null ? "-" : of100(s.vitals);
   $("#score-family-note").textContent = unknown ? "Còn " + unknown + " người thân chưa rõ tiền sử, chưa được tính vào điểm tiền sử gia đình." : "";
   $("#score-family-note").classList.toggle("hidden", !unknown);
 }
@@ -851,7 +876,7 @@ function renderGenetics() {
       familyNode(h, member("maternal-grandfather"), "ft-mgf") + familyNode(h, member("maternal-grandmother"), "ft-mgm") +
       '<span class="ft-join ft-join-p"></span><span class="ft-join ft-join-m"></span>' +
       familyNode(h, member("father"), "ft-father") + familyNode(h, member("mother"), "ft-mother") +
-      '<span class="ft-join ft-join-c"></span>' +
+      '<span class="ft-join ft-join-c"></span><span class="ft-side ft-side-c">' + (state.viewing ? esc(h.display_name) : "Bạn") + " và anh chị em</span>" +
       '<div class="ft-children"><div class="ft-node you ' + (conditions.length ? "known" : "none") + '"><span class="ft-rel">' + (state.viewing ? esc(h.display_name) : "Bạn") + '</span><span class="ft-state">' + esc(conditions.join(", ") || "Không khai báo bệnh") + "</span></div>" + familyNode(h, member("sibling")) + "</div>" +
     "</div>" +
     '<ul class="ft-legend"><li><span class="ft-key known"></span>Có bệnh đã biết</li><li><span class="ft-key none"></span>Không có bệnh đã biết</li><li><span class="ft-key unknown"></span>Chưa rõ</li></ul>' +
@@ -897,7 +922,7 @@ function renderReport() {
   const mark = v => { const levels = METRICS.map(m => statusOf(m.key, v)[0]); return levels.includes("alert") ? "Nguy hiểm" : levels.includes("attention") ? "Cần chú ý" : ""; };
   const family = MEMBERS.map(m => {
     const saved = h.family_history.find(row => row.member_id === m.id);
-    const text = saved?.knowledge === "known" && saved.conditions?.length ? saved.conditions.map(conditionName).join(", ") : saved?.knowledge === "none" ? "Không có bệnh đã biết" : "Chưa rõ";
+    const text = saved?.knowledge === "known" && saved.conditions?.length ? (saved.affected_count > 1 ? saved.affected_count + " người: " : "") + saved.conditions.map(conditionName).join(", ") : saved?.knowledge === "none" ? "Không có bệnh đã biết" : "Chưa rõ";
     return "<tr><td>" + m.label + "</td><td>" + esc(text) + "</td></tr>";
   }).join("");
   const notice = "Phiếu do người dùng tự ghi bằng ứng dụng GeneSense. Không phải kết quả khám bệnh, không có giá trị chẩn đoán.";
@@ -938,7 +963,7 @@ function renderReport() {
       series: spec.series.map(([key, label], index) => ({ label, color: "#000", dash: index ? "6 4" : "", values: points.map(row => chartValue(key, row.vitals[key])) })) });
   }
 }
-function openReport() { screen("report"); document.title = "Phiếu tổng hợp - GeneSense"; renderReport(); }
+function openReport() { screen("report"); document.title = "Phiếu tổng hợp - GeneSense"; renderReport(); history.pushState({ layer: true }, ""); reportLayer = true; }
 
 // Family sharing. While viewing a relative, the same screens render that person's data read-only:
 // state is swapped, writes are hidden (.own-only) and guarded, and reads go through the care endpoints.
@@ -976,15 +1001,15 @@ function renderCare() {
   $("#care-patients-section").classList.toggle("hidden", !patients.length);
   $("#care-patients").innerHTML = patients.map(patientRow).join("");
   $("#care-panel").innerHTML =
-    "<h2>Chia sẻ với người thân</h2>" +
-    '<p class="note">Người thân đã liên kết chỉ xem được hồ sơ và số đo. Lịch thuốc riêng tư cho đến khi bạn cho phép bên dưới. Bạn có thể thu hồi quyền xem bất cứ lúc nào.</p>' +
-    '<label class="check-label care-medication-sharing"><input id="care-share-medications" type="checkbox"' + (state.health?.share_medications ? " checked" : "") + '><span>Cho phép người thân đã liên kết xem lịch thuốc và trạng thái đã uống.<small>Không chia sẻ giấy tờ hoặc ảnh đơn thuốc.</small></span></label>' +
+    "<h2>Cho người thân xem hồ sơ của bạn</h2>" +
+    '<p class="note">Tạo mã rồi gửi cho con cháu. Họ chỉ xem, không sửa được.</p>' +
+    '<label class="check-label care-medication-sharing"><input id="care-share-medications" type="checkbox"' + (state.health?.share_medications ? " checked" : "") + '><span>Cho xem cả lịch uống thuốc<small>Không gồm giấy tờ và ảnh đơn thuốc.</small></span></label>' +
     '<button class="btn outline" id="care-create">Tạo mã chia sẻ</button><div id="care-code-box"></div>' +
-    "<h3>Người đang xem được hồ sơ của bạn</h3>" +
+    "<h3>Người đang xem hồ sơ của bạn</h3>" +
     (caregivers.length ? '<div class="care-rows">' + caregivers.map(c => '<div class="care-row"><div class="care-row-main"><strong>' + esc(c.display_name) + '</strong><span class="note">Từ ' + esc(date(c.created_at, false)) + '</span></div><button class="delete-record" data-remove-link="' + esc(c.link_id) + '" data-remove-kind="caregiver">Thu hồi</button></div>').join("") + "</div>" : '<p class="note">Chưa chia sẻ với ai.</p>') +
-    "<h3>Theo dõi người thân</h3>" +
-    '<form id="care-form" class="care-form"><label>Nhập mã người thân gửi cho bạn<input id="care-code-input" autocomplete="off" autocapitalize="characters" maxlength="16" required></label><button class="btn primary" type="submit">Liên kết</button></form><p id="care-error" class="inline-message error hidden" role="alert"></p>' +
-    (patients.length ? '<div class="care-rows">' + patients.map(patientRow).join("") + "</div>" : "");
+    '<div class="care-divider"></div><details class="record-details care-follow"' + (patients.length ? " open" : "") + "><summary>Xem hồ sơ của người thân</summary>" +
+    '<form id="care-form" class="care-form"><label>Mã người thân gửi cho bạn<input id="care-code-input" autocomplete="off" autocapitalize="characters" maxlength="16" required></label><button class="btn primary" type="submit">Liên kết</button></form><p id="care-error" class="inline-message error hidden" role="alert"></p>' +
+    (patients.length ? '<div class="care-rows">' + patients.map(patientRow).join("") + "</div>" : "") + "</details>";
 }
 async function setMedicationSharing(toggle) {
   const previous = Boolean(state.health?.share_medications), requested = toggle.checked;
@@ -1105,7 +1130,7 @@ async function viewScan(id) {
   const day = record?.analysis.document_date || (record && toDate(record.created_at).toLocaleDateString("sv"));
   save.href = state.scanUrl;
   save.download = "giay-to" + (day ? "-" + day : "") + "." + ({ "image/png": "png", "image/webp": "webp" }[blob.type] || "jpg");
-  $("#scan-dialog").showModal();
+  openDialog($("#scan-dialog"));
 }
 // Phone photos are far larger than reading needs; 2000px keeps small print legible and fits the hosting upload limit.
 async function shrinkImage(file, max = 2000) {
@@ -1164,6 +1189,7 @@ function syncApplyMedicines() {
 }
 
 const SLOTS = [["morning", "Sáng"], ["noon", "Trưa"], ["afternoon", "Chiều"], ["evening", "Tối"]];
+const currentSlot = () => { const hour = new Date().getHours(); return hour < 11 ? "morning" : hour < 14 ? "noon" : hour < 18 ? "afternoon" : "evening"; };
 const MEALS = { before: "trước ăn", after: "sau ăn" };
 const localDay = (value = new Date()) => value.toLocaleDateString("sv");
 function medicineEnd(m) {
@@ -1198,12 +1224,12 @@ function renderRecordsTab() {
 }
 function renderMedicines() {
   const active = state.medications.filter(m => medicineActive(m));
-  const hour = new Date().getHours(), now = hour < 11 ? "morning" : hour < 14 ? "noon" : hour < 18 ? "afternoon" : "evening";
+  const now = currentSlot();
   const title = m => esc(m.name + (m.strength ? " " + m.strength : ""));
   const taken = new Set((state.medicationIntakes || []).map(row => row.medication_id + ":" + row.slot));
   const item = (m, slot = null) => {
     const checked = slot && taken.has(m.id + ":" + slot);
-    const intake = slot ? '<label class="medicine-intake"><input type="checkbox" data-medication-intake="' + esc(m.id) + '" data-intake-slot="' + slot + '" aria-label="' + esc("Đã uống " + m.name + " buổi " + SLOTS.find(([key]) => key === slot)[1].toLowerCase()) + '"' + (checked ? " checked" : "") + (state.medicationIntakes === null ? " disabled" : "") + '><span>' + (checked ? "Đã ghi nhận" : "Đã uống") + "</span></label>" : "";
+    const intake = slot ? '<label class="medicine-intake"><input type="checkbox" data-medication-intake="' + esc(m.id) + '" data-intake-slot="' + slot + '" aria-label="' + esc("Đã uống " + m.name + " buổi " + SLOTS.find(([key]) => key === slot)[1].toLowerCase()) + '"' + (checked ? " checked" : "") + (state.medicationIntakes === null ? " disabled" : "") + '><span>' + (checked ? "✓ Đã uống" : "Bấm khi đã uống") + "</span></label>" : "";
     return '<li class="medicine-schedule-row"><div><strong>' + title(m) + "</strong>" + (medicineHow(m) ? "<span>" + esc(medicineHow(m)) + "</span>" : "") + (m.note ? '<span class="note">' + esc(m.note) + "</span>" : "") + "</div>" + intake + "</li>";
   };
   const block = (label, rows, current, slot = null) => rows.length ? '<article class="panel slot"><h3>' + label + (current ? ' <span class="tag">Bây giờ</span>' : "") + "</h3><ul>" + rows.map(m => item(m, slot)).join("") + "</ul></article>" : "";
@@ -1217,7 +1243,7 @@ function renderMedicines() {
   }
   const day = localDay();
   const tag = m => m.start_date > day ? '<span class="tag">Chưa bắt đầu</span>' : medicineActive(m, day) ? "" : '<span class="tag">Đã hết đợt</span>';
-  $("#medicine-all").classList.toggle("hidden", !state.medications.length);
+  $("#medicine-all-row").classList.toggle("hidden", !state.medications.length);
   $("#medicine-list-title").textContent = "Tất cả thuốc (" + state.medications.length + ")";
   $("#medicine-list").innerHTML = '<ul class="panel medicine-rows">' + state.medications.map(m =>
     "<li><div><strong>" + title(m) + "</strong><span>" + esc(medicineWhen(m) + (medicineHow(m) ? ": " + medicineHow(m) : "")) + '</span><span class="note">' + esc(medicineCourse(m)) + " " + tag(m) + "</span></div>" +
@@ -1236,6 +1262,13 @@ async function refreshMedications() {
 }
 async function setMedicationIntake(input) {
   const medicationId = input.dataset.medicationIntake, slot = input.dataset.intakeSlot, taken = input.checked;
+  const order = SLOTS.map(([key]) => key), now = currentSlot();
+  if (taken && order.indexOf(slot) > order.indexOf(now)) {
+    const label = SLOTS.find(([key]) => key === slot)[1];
+    input.checked = false;
+    if (!await confirmAction("Đánh dấu liều " + label + " đã uống?", "Bây giờ mới buổi " + SLOTS.find(([key]) => key === now)[1].toLowerCase() + ".", "Đã uống rồi", { cancel: "Không", danger: false })) return;
+    input.checked = true;
+  }
   input.disabled = true;
   try {
     const result = await api.setMedicationIntake(medicationId, slot, { scheduled_on: localDay(), taken });
@@ -1256,7 +1289,7 @@ function printMedicineSchedule() {
   const groups = SLOTS.map(([slot, label]) => {
     const rows = active.filter(m => m[slot]);
     return rows.length ? '<section class="medicine-print-group"><h2>' + label + '</h2><ul>' + rows.map(m =>
-      '<li><span><strong>' + esc(m.name + (m.strength ? " " + m.strength : "")) + '</strong><small>' + esc([m.amount, MEALS[m.meal], m.note].filter(Boolean).join(" · ") || "Theo đơn") + '</small></span><span class="medicine-print-status">' + (taken.has(m.id + ":" + slot) ? "✓ Đã ghi nhận" : "□ Chưa ghi nhận") + "</span></li>").join("") + "</ul></section>" : "";
+      '<li><span><strong>' + esc(m.name + (m.strength ? " " + m.strength : "")) + '</strong><small>' + esc([m.amount, MEALS[m.meal], m.note].filter(Boolean).join(" · ") || "Theo đơn") + '</small></span><span class="medicine-print-status">' + (taken.has(m.id + ":" + slot) ? "✓ Đã uống" : "□ Chưa uống") + "</span></li>").join("") + "</ul></section>" : "";
   }).join("");
   const asNeeded = active.filter(m => !SLOTS.some(([slot]) => m[slot]));
   const needed = asNeeded.length ? '<section class="medicine-print-group"><h2>Khi cần</h2><ul>' + asNeeded.map(m =>
@@ -1287,7 +1320,7 @@ function openMedicine(id) {
     SLOTS.forEach(([key]) => { form.elements[key].checked = m[key]; });
     form.elements.as_needed.checked = !SLOTS.some(([key]) => m[key]);
   }
-  $("#medicine-dialog").showModal();
+  openDialog($("#medicine-dialog"));
 }
 // "Khi cần" and the four times of day exclude each other, so "no fixed time" is always a choice the user made.
 function keepSlotChoice(target, slots, needed) {
@@ -1406,7 +1439,7 @@ function updateDocumentButton() {
 function openMedicalUpload() {
   if (state.viewing) return;
   resetMedicalUpload();
-  $("#medical-upload-dialog").showModal();
+  openDialog($("#medical-upload-dialog"));
 }
 
 function selectMedicalImage(event) {
@@ -1521,7 +1554,7 @@ function openMeasurement(mode = "manual") {
   if (state.viewing) return;
   errorAt("#measurement-error");
   $$("#measurement-form input[type=number]").forEach(input => fieldHint(input));
-  $("#measurement-dialog").showModal();
+  openDialog($("#measurement-dialog"));
   setMeasureMode(mode);
 }
 function setMeasureMode(mode) {
@@ -1619,12 +1652,12 @@ function vitalsProblem(values, fromPaper = false) {
   if (values.systolic != null && values.systolic <= values.diastolic) return "Số tâm thu cần lớn hơn số tâm trương. Hãy kiểm tra lại " + (fromPaper ? "giấy tờ." : "máy đo.");
   return "";
 }
-async function saveMeasurement(values, source, samples = []) {
+async function saveMeasurement(values, source, samples = [], takenAt = null) {
   if (state.busy) return;
   const problem = vitalsProblem(values);
   if (problem) { errorAt("#measurement-error", problem); return; }
   const userId = state.user.id;
-  const body = { vitals: { ...values, timestamp: new Date().toISOString() }, source, samples };
+  const body = { vitals: { ...values, timestamp: (takenAt || new Date()).toISOString() }, source, samples };
   if (source === "manual") body.client_id = crypto.randomUUID();
   state.busy = true;
   const epoch = state.authEpoch;
@@ -1636,9 +1669,10 @@ async function saveMeasurement(values, source, samples = []) {
     const r = await api.assess(body);
     if (epoch !== state.authEpoch) return;
     const record = { id: r.id, created_at: r.created_at, risk_level: r.risk_level, overall_score: r.scores.overall, vitals: { ...values, source } };
+    closeDialog($("#measurement-dialog"));
+    if (takenAt) { $("#measurement-form").reset(); toast("Đã lưu chỉ số lúc " + date(body.vitals.timestamp) + "."); await refreshRecords(); return; }
     state.records = [record, ...state.records].slice(0, 100);
     state.result = r;
-    closeDialog($("#measurement-dialog"));
     $("#measurement-form").reset();
     stopStreams();
     // The new reading was scored against the current profile, so its scores are the live ones.
@@ -1670,7 +1704,7 @@ function fieldHint(input, text = "") {
     input.setAttribute("aria-describedby", hint.id);
   }
   if (hint) { hint.textContent = text; hint.classList.toggle("hidden", !text); }
-  input.toggleAttribute("aria-invalid", Boolean(text));
+  if (text) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
 }
 function checkFields(form) {
   let ok = true;
@@ -1690,7 +1724,15 @@ async function submitManual(event) {
   if (!checkFields(form)) return;
   const data = new FormData(form);
   const values = Object.fromEntries(KEYS.map(key => [key, data.get(key)?.trim() ? Number(data.get(key)) : null]));
-  await saveMeasurement(values, "manual");
+  let takenAt = null;
+  if (data.get("when") === "earlier") {
+    const input = form.elements.measured_at;
+    takenAt = input.value ? new Date(input.value) : null;
+    const text = !takenAt ? "Hãy chọn ngày giờ đo." : takenAt > new Date() ? "Giờ đo không thể sau bây giờ." : Date.now() - takenAt > 7 * 864e5 ? "Chỉ ghi được lần đo trong 7 ngày qua." : "";
+    fieldHint(input, text);
+    if (text) { input.focus(); return; }
+  }
+  await saveMeasurement(values, "manual", [], takenAt);
 }
 function clearAccount() {
   state.authEpoch++;
@@ -1867,6 +1909,7 @@ function bindEvents() {
   document.addEventListener("click", event => {
     const nav = event.target.closest("[data-nav]");
     if (nav) {
+      if (nav.dataset.nav === "records") state.recordsTab = null;
       navigate(nav.dataset.nav);
       if (nav.closest("#app-nav-drawer")) {
         setNavDrawer(false, false);
@@ -1942,19 +1985,32 @@ function bindEvents() {
   });
   $("#medical-upload-dialog").addEventListener("close", resetMedicalUpload);
   $$("[data-measure-mode]").forEach(button => button.addEventListener("click", () => setMeasureMode(button.dataset.measureMode)));
-  $("#measurement-dialog").addEventListener("close", stopStreams);
+  $("#measurement-dialog").addEventListener("close", () => { stopStreams(); $("#measurement-form").reset(); });
   $("#measurement-form").addEventListener("submit", submitManual);
+  $("#measurement-form").addEventListener("change", event => {
+    if (event.target.name !== "when") return;
+    const earlier = event.target.value === "earlier", input = $("#measurement-form").elements.measured_at;
+    $("#measured-at-time").classList.toggle("hidden", !earlier);
+    if (earlier) {
+      const local = d => new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+      input.max = local(new Date()); input.min = local(new Date(Date.now() - 7 * 864e5));
+      if (!input.value) input.value = input.max;
+      // Centred, so the sticky save bar never covers the field that just appeared.
+      input.focus({ preventScroll: true });
+      $("#measured-at-time").scrollIntoView({ block: "center" });
+    } else fieldHint(input, "");
+  });
+  $("#measurement-form").addEventListener("reset", () => { $("#measured-at-time").classList.add("hidden"); fieldHint($("#measurement-form").elements.measured_at, ""); });
   // A message about the old input must not stay once the user changes it.
   $("#measurement-form").addEventListener("input", event => { errorAt("#measurement-error"); if (event.target.name in FIELD_NAMES) fieldHint(event.target); });
   $("#connect-ble").addEventListener("click", connectBle);
   $("#simulate-ble").addEventListener("click", startSimulation);
   $("#disconnect-device").addEventListener("click", stopStreams);
   $("#save-device").addEventListener("click", () => saveMeasurement(freshValues(), state.deviceSource || "ble", state.samples.slice()));
-  $("#refresh-history").addEventListener("click", refreshRecords);
   $("#open-report").addEventListener("click", openReport);
   $("#report-days").addEventListener("change", renderReport);
   $("#report-print").addEventListener("click", () => window.print());
-  $("#report-back").addEventListener("click", () => { screen("app"); navigate("history"); });
+  $("#report-back").addEventListener("click", () => { if (reportLayer) { reportLayer = false; dropLayer(); } screen("app"); navigate("history"); });
   $("#history-filter").addEventListener("change", () => { state.historyAll = false; renderHistory(); });
   $("#history-list").addEventListener("click", event => { if (event.target.closest("#history-more")) { state.historyAll = true; renderHistory(); } });
   // Charts are drawn at the width they have at that moment, so they are drawn again when the window changes size.
@@ -1987,6 +2043,18 @@ function bindEvents() {
   accountChannel?.addEventListener("message", () => { clearAccount(); boot(); });
   // Links like the header logo only change the hash; route on every hash change (also back/forward).
   window.addEventListener("hashchange", () => { if (state.user && state.health) navigate(location.hash.slice(1) || "dashboard"); });
+  window.addEventListener("popstate", () => {
+    // Our own step back after a layer closed by its button: only keep the address on the page shown.
+    if (layerPops) { layerPops--; if (state.user && state.health) history.replaceState(null, "", "#" + state.view); return; }
+    const dialog = $$("dialog[open][data-layer]").sort((a, b) => b.dataset.layer - a.dataset.layer)[0];
+    if (dialog) { delete dialog.dataset.layer; closeDialog(dialog); }
+    else if (reportLayer) { reportLayer = false; screen("app"); navigate("history"); }
+  });
+  document.addEventListener("close", event => {
+    if (!event.target.dataset?.layer) return;
+    delete event.target.dataset.layer;
+    dropLayer();
+  }, true);
   window.addEventListener("pagehide", stopStreams);
   window.addEventListener("pageshow", event => { if (event.persisted) { clearAccount(); boot(); } });
   document.addEventListener("visibilitychange", async () => {
