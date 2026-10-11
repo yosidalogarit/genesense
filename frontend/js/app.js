@@ -1175,6 +1175,7 @@ function syncApplyMedicines() {
 }
 
 const SLOTS = [["morning", "Sáng"], ["noon", "Trưa"], ["afternoon", "Chiều"], ["evening", "Tối"]];
+const currentSlot = () => { const hour = new Date().getHours(); return hour < 11 ? "morning" : hour < 14 ? "noon" : hour < 18 ? "afternoon" : "evening"; };
 const MEALS = { before: "trước ăn", after: "sau ăn" };
 const localDay = (value = new Date()) => value.toLocaleDateString("sv");
 function medicineEnd(m) {
@@ -1209,7 +1210,7 @@ function renderRecordsTab() {
 }
 function renderMedicines() {
   const active = state.medications.filter(m => medicineActive(m));
-  const hour = new Date().getHours(), now = hour < 11 ? "morning" : hour < 14 ? "noon" : hour < 18 ? "afternoon" : "evening";
+  const now = currentSlot();
   const title = m => esc(m.name + (m.strength ? " " + m.strength : ""));
   const taken = new Set((state.medicationIntakes || []).map(row => row.medication_id + ":" + row.slot));
   const item = (m, slot = null) => {
@@ -1228,7 +1229,7 @@ function renderMedicines() {
   }
   const day = localDay();
   const tag = m => m.start_date > day ? '<span class="tag">Chưa bắt đầu</span>' : medicineActive(m, day) ? "" : '<span class="tag">Đã hết đợt</span>';
-  $("#medicine-all").classList.toggle("hidden", !state.medications.length);
+  $("#medicine-all-row").classList.toggle("hidden", !state.medications.length);
   $("#medicine-list-title").textContent = "Tất cả thuốc (" + state.medications.length + ")";
   $("#medicine-list").innerHTML = '<ul class="panel medicine-rows">' + state.medications.map(m =>
     "<li><div><strong>" + title(m) + "</strong><span>" + esc(medicineWhen(m) + (medicineHow(m) ? ": " + medicineHow(m) : "")) + '</span><span class="note">' + esc(medicineCourse(m)) + " " + tag(m) + "</span></div>" +
@@ -1247,6 +1248,13 @@ async function refreshMedications() {
 }
 async function setMedicationIntake(input) {
   const medicationId = input.dataset.medicationIntake, slot = input.dataset.intakeSlot, taken = input.checked;
+  const order = SLOTS.map(([key]) => key), now = currentSlot();
+  if (taken && order.indexOf(slot) > order.indexOf(now)) {
+    const label = SLOTS.find(([key]) => key === slot)[1];
+    input.checked = false;
+    if (!await confirmAction("Đánh dấu liều " + label + " đã uống?", "Bây giờ mới buổi " + SLOTS.find(([key]) => key === now)[1].toLowerCase() + ".", "Đã uống rồi", { cancel: "Không", danger: false })) return;
+    input.checked = true;
+  }
   input.disabled = true;
   try {
     const result = await api.setMedicationIntake(medicationId, slot, { scheduled_on: localDay(), taken });
@@ -1630,12 +1638,12 @@ function vitalsProblem(values, fromPaper = false) {
   if (values.systolic != null && values.systolic <= values.diastolic) return "Số tâm thu cần lớn hơn số tâm trương. Hãy kiểm tra lại " + (fromPaper ? "giấy tờ." : "máy đo.");
   return "";
 }
-async function saveMeasurement(values, source, samples = []) {
+async function saveMeasurement(values, source, samples = [], takenAt = null) {
   if (state.busy) return;
   const problem = vitalsProblem(values);
   if (problem) { errorAt("#measurement-error", problem); return; }
   const userId = state.user.id;
-  const body = { vitals: { ...values, timestamp: new Date().toISOString() }, source, samples };
+  const body = { vitals: { ...values, timestamp: (takenAt || new Date()).toISOString() }, source, samples };
   if (source === "manual") body.client_id = crypto.randomUUID();
   state.busy = true;
   const epoch = state.authEpoch;
@@ -1647,9 +1655,10 @@ async function saveMeasurement(values, source, samples = []) {
     const r = await api.assess(body);
     if (epoch !== state.authEpoch) return;
     const record = { id: r.id, created_at: r.created_at, risk_level: r.risk_level, overall_score: r.scores.overall, vitals: { ...values, source } };
+    closeDialog($("#measurement-dialog"));
+    if (takenAt) { $("#measurement-form").reset(); toast("Đã lưu chỉ số lúc " + date(body.vitals.timestamp) + "."); await refreshRecords(); return; }
     state.records = [record, ...state.records].slice(0, 100);
     state.result = r;
-    closeDialog($("#measurement-dialog"));
     $("#measurement-form").reset();
     stopStreams();
     // The new reading was scored against the current profile, so its scores are the live ones.
@@ -1701,7 +1710,15 @@ async function submitManual(event) {
   if (!checkFields(form)) return;
   const data = new FormData(form);
   const values = Object.fromEntries(KEYS.map(key => [key, data.get(key)?.trim() ? Number(data.get(key)) : null]));
-  await saveMeasurement(values, "manual");
+  let takenAt = null;
+  if (data.get("when") === "earlier") {
+    const input = form.elements.measured_at;
+    takenAt = input.value ? new Date(input.value) : null;
+    const text = !takenAt ? "Hãy chọn ngày giờ đo." : takenAt > new Date() ? "Giờ đo không thể sau bây giờ." : Date.now() - takenAt > 7 * 864e5 ? "Chỉ ghi được lần đo trong 7 ngày qua." : "";
+    fieldHint(input, text);
+    if (text) { input.focus(); return; }
+  }
+  await saveMeasurement(values, "manual", [], takenAt);
 }
 function clearAccount() {
   state.authEpoch++;
@@ -1956,6 +1973,18 @@ function bindEvents() {
   $$("[data-measure-mode]").forEach(button => button.addEventListener("click", () => setMeasureMode(button.dataset.measureMode)));
   $("#measurement-dialog").addEventListener("close", () => { stopStreams(); $("#measurement-form").reset(); });
   $("#measurement-form").addEventListener("submit", submitManual);
+  $("#measurement-form").addEventListener("change", event => {
+    if (event.target.name !== "when") return;
+    const earlier = event.target.value === "earlier", input = $("#measurement-form").elements.measured_at;
+    $("#measured-at-time").classList.toggle("hidden", !earlier);
+    if (earlier) {
+      const local = d => new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+      input.max = local(new Date()); input.min = local(new Date(Date.now() - 7 * 864e5));
+      if (!input.value) input.value = input.max;
+      input.focus();
+    } else fieldHint(input, "");
+  });
+  $("#measurement-form").addEventListener("reset", () => { $("#measured-at-time").classList.add("hidden"); fieldHint($("#measurement-form").elements.measured_at, ""); });
   // A message about the old input must not stay once the user changes it.
   $("#measurement-form").addEventListener("input", event => { errorAt("#measurement-error"); if (event.target.name in FIELD_NAMES) fieldHint(event.target); });
   $("#connect-ble").addEventListener("click", connectBle);
