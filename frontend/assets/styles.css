@@ -293,7 +293,7 @@ body.nav-open { overflow: hidden; }
 .trend-legend { display: flex; flex-wrap: wrap; gap: 4px 20px; list-style: none; padding: 0; margin: 0 0 8px; font-size: .889rem; color: var(--ink-2); }
 .trend-legend span { display: inline-block; width: 18px; height: 3px; margin-right: 8px; border-radius: 2px; vertical-align: middle; }
 .key-sys { background: #0b57a4; }
-.key-dia { background: #3d8fd6; }
+.key-dia { height: 0 !important; background: none; border-top: 3px dashed #3d8fd6; }
 .trend-chart { position: relative; height: 200px; border-radius: 4px; min-width: 0; touch-action: pan-y; }
 .chart-svg { max-width: 100%; }
 .trend-empty { margin: 8px 0 0; }

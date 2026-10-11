@@ -182,6 +182,15 @@ function toast(text, type = "") {
     setTimeout(() => el.remove(), 400);
   }, 4500);
 }
+// Phone Back closes the dialog or report on top instead of leaving the page: each one opens a history entry,
+// and closing it any other way takes that entry back off.
+let layerCount = 0, layerPops = 0, reportLayer = false;
+function openDialog(dialog) {
+  dialog.showModal();
+  dialog.dataset.layer = String(++layerCount);
+  history.pushState({ layer: true }, "");
+}
+function dropLayer() { layerPops++; history.back(); }
 // Plays the exit animation before the native close, so "close" listeners still fire once, at the end.
 function closeDialog(dialog) {
   if (!dialog.open || dialog.classList.contains("closing")) return;
@@ -199,7 +208,7 @@ function confirmAction(title, body = "Không thể khôi phục sau khi xóa.", 
   $("#confirm-ok").className = "btn " + (danger ? "danger" : "primary");
   $("#confirm-no").textContent = cancel;
   dialog.returnValue = ""; // Esc closes without a value, so an earlier "yes" must not count again
-  dialog.showModal();
+  openDialog(dialog);
   return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue === "yes"), { once: true }));
 }
 function errorAt(id, text = "") {
@@ -288,7 +297,7 @@ async function chooseAvatar(file) {
   Object.assign(crop, { zoom: 1, x: (CROP - crop.image.width * fit) / 2, y: (CROP - crop.image.height * fit) / 2 });
   $("#avatar-zoom").value = 1;
   drawCrop();
-  $("#avatar-dialog").showModal();
+  openDialog($("#avatar-dialog"));
 }
 // Only a 256px JPEG of the chosen area leaves the device.
 async function saveAvatar() {
@@ -532,12 +541,14 @@ function renderTips() {
   const daily = dailyTip();
   const cards = tips.slice(0, 4).map(tip => tipCard(tip, tipImage(tip)));
   const dailyCard = tipCard(daily, tipImage(daily), "Gợi ý hôm nay");
-  $("#tip-list").innerHTML = cards.join("") + dailyCard;
+  const more = cards.slice(1);
+  $("#tip-list").innerHTML = more.join("");
+  $("#tip-more").textContent = (cards[0] ? 2 : 1) + " lời khuyên khác ở trang Hôm nay.";
   // Today shows only the top personal tip and the daily one; advice must not compete with the emergency panel.
   $("#today-tips").innerHTML = (cards[0] || "") + dailyCard;
   $("#today-advice").classList.toggle("hidden", isEmergency(state.result));
   // During the 24h watch window the stored "all fine" follow-up would contradict Today.
-  const followUp = state.result && !isEmergency(state.result) && recentEmergency() ? "" : state.result?.insight.follow_up || "";
+  const followUp = state.result && !isEmergency(state.result) && recentEmergency() || state.result?.risk_level === "safe" ? "" : state.result?.insight.follow_up || "";
   $("#follow-up").textContent = followUp;
   $("#follow-up").classList.toggle("hidden", !followUp);
 }
@@ -610,7 +621,7 @@ function renderTrends() {
     if (!points.length) continue;
     trendCharts[id] ||= new TrendChart(host);
     trendCharts[id].set({ unit: spec.unit, band: spec.band, thresholds: spec.thresholds, min: spec.min, max: spec.max, times: points.map(row => toDate(row.created_at)),
-      series: spec.series.map(([key, label, color]) => ({ label, color, values: points.map(row => chartValue(key, row.vitals[key])),
+      series: spec.series.map(([key, label, color]) => ({ label, color, dash: key === "diastolic" ? "10 6" : null, values: points.map(row => chartValue(key, row.vitals[key])),
         flags: points.map(row => ["attention", "alert"].includes(chartStatus(key, row.vitals))) })) });
   }
 }
@@ -706,7 +717,7 @@ async function showResult(id) {
     const level = levelOf(r);
     $("#result-detail").innerHTML = '<p class="note">' + (fromDocument(r) ? "Ghi trên giấy tờ ngày " + when(r) : "Đo lúc " + when(r) + ", " + esc(SOURCE_NAMES[r.measurement_source].toLowerCase())) + '</p><span class="tag ' + (level === "emergency" ? "alert" : level) + '">' + LEVELS[level] + "</span>" + (level === "emergency" && !fromDocument(r) ? '<p class="detail-gap"><a class="btn danger" href="tel:115">Gọi cấp cứu 115</a></p>' : "") + '<p class="detail-gap">' + (fromDocument(r) ? "Số liệu cũ từ giấy tờ." : esc(r.insight.summary)) + '</p><div class="result-detail-vitals">' + METRICS.map(m => "<div><span>" + m.label + "</span><strong>" + (r.measured_vitals?.[m.key] == null ? "Chưa đo" : withUnit(valueOf(m.key, r.measured_vitals), m.unit)) + "</strong></div>").join("") + "</div>" + (fromDocument(r) ? "" : alertsMarkup(r) + (r.insight.follow_up ? '<p class="note">' + esc(r.insight.follow_up) + "</p>" : ""));
     $("#delete-assessment").dataset.id = r.id;
-    $("#result-dialog").showModal();
+    openDialog($("#result-dialog"));
   } catch (error) { toast(error.message, "error"); }
 }
 function bmiLabel(bmi) {
@@ -949,7 +960,7 @@ function renderReport() {
       series: spec.series.map(([key, label], index) => ({ label, color: "#000", dash: index ? "6 4" : "", values: points.map(row => chartValue(key, row.vitals[key])) })) });
   }
 }
-function openReport() { screen("report"); document.title = "Phiếu tổng hợp - GeneSense"; renderReport(); }
+function openReport() { screen("report"); document.title = "Phiếu tổng hợp - GeneSense"; renderReport(); history.pushState({ layer: true }, ""); reportLayer = true; }
 
 // Family sharing. While viewing a relative, the same screens render that person's data read-only:
 // state is swapped, writes are hidden (.own-only) and guarded, and reads go through the care endpoints.
@@ -989,13 +1000,13 @@ function renderCare() {
   $("#care-panel").innerHTML =
     "<h2>Cho người thân xem hồ sơ của bạn</h2>" +
     '<p class="note">Tạo mã rồi gửi cho con cháu. Họ chỉ xem, không sửa được.</p>' +
-    '<button class="btn outline" id="care-create">Tạo mã chia sẻ</button><div id="care-code-box"></div>' +
     '<label class="check-label care-medication-sharing"><input id="care-share-medications" type="checkbox"' + (state.health?.share_medications ? " checked" : "") + '><span>Cho xem cả lịch uống thuốc<small>Không gồm giấy tờ và ảnh đơn thuốc.</small></span></label>' +
+    '<button class="btn outline" id="care-create">Tạo mã chia sẻ</button><div id="care-code-box"></div>' +
     "<h3>Người đang xem hồ sơ của bạn</h3>" +
     (caregivers.length ? '<div class="care-rows">' + caregivers.map(c => '<div class="care-row"><div class="care-row-main"><strong>' + esc(c.display_name) + '</strong><span class="note">Từ ' + esc(date(c.created_at, false)) + '</span></div><button class="delete-record" data-remove-link="' + esc(c.link_id) + '" data-remove-kind="caregiver">Thu hồi</button></div>').join("") + "</div>" : '<p class="note">Chưa chia sẻ với ai.</p>') +
-    '<div class="care-divider"></div><h2>Xem hồ sơ của người thân</h2>' +
+    '<div class="care-divider"></div><details class="record-details care-follow"' + (patients.length ? " open" : "") + "><summary>Xem hồ sơ của người thân</summary>" +
     '<form id="care-form" class="care-form"><label>Mã người thân gửi cho bạn<input id="care-code-input" autocomplete="off" autocapitalize="characters" maxlength="16" required></label><button class="btn primary" type="submit">Liên kết</button></form><p id="care-error" class="inline-message error hidden" role="alert"></p>' +
-    (patients.length ? '<div class="care-rows">' + patients.map(patientRow).join("") + "</div>" : "");
+    (patients.length ? '<div class="care-rows">' + patients.map(patientRow).join("") + "</div>" : "") + "</details>";
 }
 async function setMedicationSharing(toggle) {
   const previous = Boolean(state.health?.share_medications), requested = toggle.checked;
@@ -1116,7 +1127,7 @@ async function viewScan(id) {
   const day = record?.analysis.document_date || (record && toDate(record.created_at).toLocaleDateString("sv"));
   save.href = state.scanUrl;
   save.download = "giay-to" + (day ? "-" + day : "") + "." + ({ "image/png": "png", "image/webp": "webp" }[blob.type] || "jpg");
-  $("#scan-dialog").showModal();
+  openDialog($("#scan-dialog"));
 }
 // Phone photos are far larger than reading needs; 2000px keeps small print legible and fits the hosting upload limit.
 async function shrinkImage(file, max = 2000) {
@@ -1306,7 +1317,7 @@ function openMedicine(id) {
     SLOTS.forEach(([key]) => { form.elements[key].checked = m[key]; });
     form.elements.as_needed.checked = !SLOTS.some(([key]) => m[key]);
   }
-  $("#medicine-dialog").showModal();
+  openDialog($("#medicine-dialog"));
 }
 // "Khi cần" and the four times of day exclude each other, so "no fixed time" is always a choice the user made.
 function keepSlotChoice(target, slots, needed) {
@@ -1425,7 +1436,7 @@ function updateDocumentButton() {
 function openMedicalUpload() {
   if (state.viewing) return;
   resetMedicalUpload();
-  $("#medical-upload-dialog").showModal();
+  openDialog($("#medical-upload-dialog"));
 }
 
 function selectMedicalImage(event) {
@@ -1540,7 +1551,7 @@ function openMeasurement(mode = "manual") {
   if (state.viewing) return;
   errorAt("#measurement-error");
   $$("#measurement-form input[type=number]").forEach(input => fieldHint(input));
-  $("#measurement-dialog").showModal();
+  openDialog($("#measurement-dialog"));
   setMeasureMode(mode);
 }
 function setMeasureMode(mode) {
@@ -1996,7 +2007,7 @@ function bindEvents() {
   $("#open-report").addEventListener("click", openReport);
   $("#report-days").addEventListener("change", renderReport);
   $("#report-print").addEventListener("click", () => window.print());
-  $("#report-back").addEventListener("click", () => { screen("app"); navigate("history"); });
+  $("#report-back").addEventListener("click", () => { if (reportLayer) { reportLayer = false; dropLayer(); } screen("app"); navigate("history"); });
   $("#history-filter").addEventListener("change", () => { state.historyAll = false; renderHistory(); });
   $("#history-list").addEventListener("click", event => { if (event.target.closest("#history-more")) { state.historyAll = true; renderHistory(); } });
   // Charts are drawn at the width they have at that moment, so they are drawn again when the window changes size.
@@ -2029,6 +2040,18 @@ function bindEvents() {
   accountChannel?.addEventListener("message", () => { clearAccount(); boot(); });
   // Links like the header logo only change the hash; route on every hash change (also back/forward).
   window.addEventListener("hashchange", () => { if (state.user && state.health) navigate(location.hash.slice(1) || "dashboard"); });
+  window.addEventListener("popstate", () => {
+    // Our own step back after a layer closed by its button: only keep the address on the page shown.
+    if (layerPops) { layerPops--; if (state.user && state.health) history.replaceState(null, "", "#" + state.view); return; }
+    const dialog = $$("dialog[open][data-layer]").sort((a, b) => b.dataset.layer - a.dataset.layer)[0];
+    if (dialog) { delete dialog.dataset.layer; closeDialog(dialog); }
+    else if (reportLayer) { reportLayer = false; screen("app"); navigate("history"); }
+  });
+  document.addEventListener("close", event => {
+    if (!event.target.dataset?.layer) return;
+    delete event.target.dataset.layer;
+    dropLayer();
+  }, true);
   window.addEventListener("pagehide", stopStreams);
   window.addEventListener("pageshow", event => { if (event.persisted) { clearAccount(); boot(); } });
   document.addEventListener("visibilitychange", async () => {
