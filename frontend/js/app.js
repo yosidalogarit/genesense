@@ -1981,7 +1981,9 @@ function bindEvents() {
       const local = d => new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
       input.max = local(new Date()); input.min = local(new Date(Date.now() - 7 * 864e5));
       if (!input.value) input.value = input.max;
-      input.focus();
+      // Centred, so the sticky save bar never covers the field that just appeared.
+      input.focus({ preventScroll: true });
+      $("#measured-at-time").scrollIntoView({ block: "center" });
     } else fieldHint(input, "");
   });
   $("#measurement-form").addEventListener("reset", () => { $("#measured-at-time").classList.add("hidden"); fieldHint($("#measurement-form").elements.measured_at, ""); });
