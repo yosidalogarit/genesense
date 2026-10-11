@@ -175,6 +175,13 @@ def test_profile_validation_and_partial_measurements(client):
     assert response.json()["measured_vitals"]["spo2"] is None
     emergency = client.post("/api/assessments", json={"vitals": {"spo2": 85}})
     assert emergency.json()["risk_level"] == "alert"
+    # Blood sugar keeps when it was measured; the context is dropped when there is no blood sugar.
+    fasting = client.post("/api/assessments", json={"vitals": {"glucose": 110, "glucose_context": "fasting"}})
+    assert fasting.json()["measured_vitals"]["glucose_context"] == "fasting"
+    assert client.get("/api/assessments").json()[0]["vitals"]["glucose_context"] == "fasting"
+    alone = client.post("/api/assessments", json={"vitals": {"heart_rate": 70, "glucose_context": "after_meal"}})
+    assert alone.json()["measured_vitals"]["glucose_context"] is None
+    assert client.post("/api/assessments", json={"vitals": {"glucose": 110, "glucose_context": "bedtime"}}).status_code == 422
 
 
 def test_idempotent_manual_sync_and_seven_day_bp_groups(client):

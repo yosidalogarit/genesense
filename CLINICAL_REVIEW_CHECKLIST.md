@@ -7,6 +7,7 @@
 - Cách ứng dụng tổng hợp yếu tố nguy cơ từ bệnh sử gia đình và diễn đạt mức nguy cơ trên giao diện.
 - Tính dễ hiểu của phần giải thích, các hành động tiếp theo và giới hạn của điểm số.
 - Các ngưỡng cảnh báo chỉ số, cách ưu tiên cảnh báo cấp cứu và nội dung hướng người dùng gọi 115.
+- Ngưỡng đường huyết: ứng dụng ghi lúc đo (lúc đói, sau ăn hoặc không rõ) nhưng vẫn dùng một khoảng an toàn 70–180 mg/dL cho mọi lần đo. Cần quyết định có tách ngưỡng theo lúc đo hay không.
 - Cách xử lý hồ sơ thiếu, chưa rõ hoặc nhập không nhất quán; tránh khiến người dùng hiểu thiếu dữ liệu là nguy cơ thấp.
 - Mức độ phù hợp của cảnh báo “không thay thế chẩn đoán”; khả năng người dùng nhầm gợi ý theo dõi với chỉ định điều trị.
 - Tác động của tuổi, giới tính, bệnh đã chẩn đoán và bệnh sử gia đình trong từng nhánh kết quả.

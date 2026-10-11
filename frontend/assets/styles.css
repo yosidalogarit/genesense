@@ -837,7 +837,7 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
 .measured-at { margin-top: 20px; }
 .measured-at .chips { flex-wrap: nowrap; }
 .measured-at .chips label { flex: 1; min-width: 0; padding: 8px 10px; white-space: nowrap; }
-.measured-at .chips input { height: 20px; min-height: 0; margin: 0; padding: 0; flex: none; }
+.measured-at .chips input, .glucose-when .chips input { height: 20px; min-height: 0; margin: 0; padding: 0; flex: none; }
 #measured-at-time { margin-top: 12px; }
 @media (max-width: 760px) {
   #medicines-panel .heading-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
@@ -845,3 +845,27 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
 }
 .menu-page { display: none; }
 @media (min-width: 761px) { .menu-page { display: inline; margin-right: 8px; font-weight: 600; color: var(--ink); } }
+.measure-guide { margin: 4px 0 12px; }
+.measure-guide ul { margin: 4px 0 0; padding-left: 22px; }
+.glucose-when .chips label { padding: 8px 12px; }
+.reading-name small { display: block; font-size: 1rem; font-weight: 400; color: var(--ink-2); }
+.feedback-fold summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; cursor: pointer; list-style: none; }
+.feedback-fold summary::-webkit-details-marker { display: none; }
+.feedback-fold summary h2 { margin: 0; }
+.feedback-fold summary [data-icon] { transition: transform .2s var(--ease-out); }
+.feedback-fold[open] summary [data-icon] { transform: rotate(90deg); }
+.feedback-fold[open] summary { margin-bottom: 12px; }
+.risk-do-fold { margin-top: 4px; }
+@media (max-width: 760px) {
+  /* Di truyền: relatives on one line. */
+  .risk-who { display: block; }
+  .risk-who-label { font-size: 1rem; }
+  .risk-who-label::after { content: ": "; }
+  .risk-who span:not(.risk-who-label) { padding: 0; border: 0; }
+  .risk-who span:not(.risk-who-label):not(:last-child)::after { content: ", "; font-weight: 400; }
+  /* Hồ sơ: facts two per row, label above value. */
+  .facts-2col { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+  .facts-2col > div { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 0; }
+  .facts-2col > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .facts-2col dd { text-align: left; }
+}
