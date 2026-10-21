@@ -12,8 +12,13 @@ const HEREDITARY = [["thalassemia", "Thalassemia (tan máu bẩm sinh)"], ["g6pd
 const HEREDITARY_WHO = [["self", "Bạn"], ["father", "Bố"], ["mother", "Mẹ"], ["sibling", "Anh chị em ruột"], ["paternal-grandfather", "Ông nội"], ["paternal-grandmother", "Bà nội"],
   ["maternal-grandfather", "Ông ngoại"], ["maternal-grandmother", "Bà ngoại"], ["maternal-uncle", "Cậu (anh, em trai của mẹ)"]];
 const NOT_FOR_OVARIAN = new Set(["father", "paternal-grandfather", "maternal-grandfather", "maternal-uncle"]);   // not offered for ovarian cancer
-const SCREENS = { thalassemia: "Thalassemia (tan máu bẩm sinh)", g6pd: "Thiếu men G6PD", brca: "Ung thư vú, buồng trứng di truyền (gen BRCA)", familial_hypercholesterolemia: "Tăng cholesterol gia đình" };
-const PATTERNS = { recessive: "Di truyền lặn: con mắc bệnh khi cả bố và mẹ cùng mang gen", x_linked: "Di truyền qua nhiễm sắc thể X", dominant: "Di truyền trội: có thể nhận gen từ bố hoặc mẹ" };
+const SCREENS = { thalassemia: "Thalassemia (tan máu bẩm sinh)", g6pd: "Thiếu men G6PD", brca: "Ung thư vú/buồng trứng liên quan BRCA1/2", familial_hypercholesterolemia: "Tăng cholesterol gia đình (FH)" };
+const PATTERNS = {
+  thalassemia: "Thalassemia có nhiều thể. Một số thể beta di truyền lặn; alpha thalassemia có các tổ hợp gen phức tạp hơn. Tiền sử gia đình không cho biết ai mang biến thể.",
+  x_linked: "G6PD nằm trên nhiễm sắc thể X. Bố không truyền nhiễm sắc thể X cho con trai; biểu hiện ở nữ có thể khác nhau. Phả hệ không thay thế xét nghiệm men G6PD.",
+  brca: "Một số biến thể BRCA có thể truyền từ bố hoặc mẹ và làm tăng nguy cơ ung thư; mang biến thể không đồng nghĩa chắc chắn mắc bệnh.",
+  fh: "Phần lớn FH có kiểu di truyền trội, nhưng có thể có nguyên nhân và kiểu di truyền khác. Chỉ tiền sử cholesterol cao không xác định FH."
+};
 const conditionName = key => [...CONDITIONS, ...HEREDITARY].find(([id]) => id === key)?.[1];
 const MEMBERS = [
   { id: "father", label: "Bố", relation: "father", side: "immediate" },
@@ -23,6 +28,35 @@ const MEMBERS = [
   { id: "paternal-grandmother", label: "Bà nội", relation: "grandmother", side: "paternal" },
   { id: "maternal-grandfather", label: "Ông ngoại", relation: "grandfather", side: "maternal" },
   { id: "maternal-grandmother", label: "Bà ngoại", relation: "grandmother", side: "maternal" },
+];
+const FAMILY_HISTORY_SOURCES = [["self_reported", "Tôi tự khai"], ["relative_reported", "Người thân xác nhận"],
+  ["document_checked", "Đã đối chiếu giấy tờ"], ["clinician_reviewed", "Nhân viên y tế xác nhận"], ["unknown", "Chưa rõ"]];
+const FAMILY_HISTORY_SOURCE_LABEL = Object.fromEntries(FAMILY_HISTORY_SOURCES);
+const GENETIC_GUIDES = [
+  {
+    title: "Thalassemia (tan máu bẩm sinh)", summary: "Bệnh máu có nhiều thể alpha và beta; người mang một số biến thể có thể ít hoặc không có triệu chứng.",
+    inheritance: "Một số thể beta di truyền lặn; alpha thalassemia phụ thuộc số lượng và tổ hợp gen bị ảnh hưởng. Không thể xác định tình trạng mang gen chỉ từ phả hệ.",
+    next: "Hỏi bác sĩ về xét nghiệm máu phù hợp hoặc tư vấn di truyền, nhất là khi gia đình có người bệnh hay bạn đang chuẩn bị có con.",
+    links: [["Alpha thalassemia — MedlinePlus", "https://medlineplus.gov/genetics/condition/alpha-thalassemia/"], ["Beta thalassemia — MedlinePlus", "https://medlineplus.gov/genetics/condition/beta-thalassemia/"]]
+  },
+  {
+    title: "Thiếu men G6PD", summary: "Thiếu một enzyme bảo vệ hồng cầu; một số thuốc, nhiễm trùng hoặc yếu tố khác có thể kích hoạt tan máu.",
+    inheritance: "Gen G6PD nằm trên nhiễm sắc thể X. Bố không truyền X cho con trai; biểu hiện ở nữ có thể khác nhau.",
+    next: "Nếu đã được chẩn đoán, hãy báo bác sĩ và dược sĩ trước khi dùng thuốc mới; không tự ý ngừng thuốc. Xét nghiệm máu giúp xác định men G6PD.",
+    links: [["Thiếu men G6PD — MedlinePlus", "https://medlineplus.gov/genetics/condition/glucose-6-phosphate-dehydrogenase-deficiency/"]]
+  },
+  {
+    title: "Ung thư liên quan BRCA1/2", summary: "Một số biến thể BRCA làm tăng nguy cơ một số ung thư; phần lớn ung thư vú không phải do biến thể di truyền.",
+    inheritance: "Biến thể nguy cơ có thể truyền từ mẹ hoặc bố. Người mang biến thể không chắc chắn sẽ mắc ung thư.",
+    next: "Nếu gia đình có nhiều trường hợp ung thư vú/buồng trứng hoặc ca bệnh đặc biệt, hãy hỏi bác sĩ về tư vấn di truyền và lựa chọn tầm soát.",
+    links: [["Ung thư vú — MedlinePlus", "https://medlineplus.gov/genetics/condition/breast-cancer/"], ["Ung thư buồng trứng — MedlinePlus", "https://medlineplus.gov/genetics/condition/ovarian-cancer/"]]
+  },
+  {
+    title: "Tăng cholesterol gia đình (FH)", summary: "Một số thể làm LDL-cholesterol rất cao và có thể gây bệnh tim sớm; cholesterol cao đơn thuần chưa đủ để kết luận FH.",
+    inheritance: "Phần lớn FH do một số gen như LDLR, APOB hoặc PCSK9 di truyền trội; hiếm hơn, biến thể LDLRAP1 di truyền lặn.",
+    next: "Khi người thân đã được chẩn đoán FH, hãy hỏi bác sĩ xem bạn và người thân có cần xét nghiệm mỡ máu hoặc đánh giá thêm không.",
+    links: [["FH — MedlinePlus Genetics", "https://medlineplus.gov/genetics/condition/familial-hypercholesterolemia/"]]
+  },
 ];
 const METRICS = [
   { key: "systolic", label: "Huyết áp", unit: "mmHg", icon: "pressure" },
@@ -77,9 +111,9 @@ function revealPanelOnce(element, key) {
 const isEmergency = result => Boolean(result?.alerts?.some(a => a.severity === "alert"));
 const levelOf = result => isEmergency(result) ? "emergency" : result.risk_level;
 const isReal = record => (record.vitals?.source || "manual") !== "simulation";
-const DOCUMENT_TYPES = { lab_result: "Kết quả xét nghiệm", prescription: "Đơn thuốc", discharge_note: "Giấy ra viện", imaging_report: "Kết quả chẩn đoán hình ảnh", vaccination: "Tiêm chủng", other: "Tài liệu sức khỏe" };
+const DOCUMENT_TYPES = { lab_result: "Kết quả xét nghiệm", genetic_test_report: "Kết quả xét nghiệm di truyền", prescription: "Đơn thuốc", discharge_note: "Giấy ra viện", imaging_report: "Kết quả chẩn đoán hình ảnh", vaccination: "Tiêm chủng", other: "Tài liệu sức khỏe" };
 const FLAG_NAMES = { normal: "Trong khoảng tham chiếu", high: "Cao", low: "Thấp", abnormal: "Cần xem lại", unknown: "Chưa rõ" };
-const state = { viewing: null, viewingMedications: null, own: null, care: { patients: [], caregivers: [] }, user: null, health: null, records: [], result: null, risk: null, weeklyBP: null, step: 0, editing: false, rating: 0,
+const state = { viewing: null, viewingMedications: null, own: null, care: { patients: [], caregivers: [] }, familyLinks: { relatives: [] }, familyInviteCode: null, familyInvitePreview: null, user: null, health: null, records: [], result: null, risk: null, weeklyBP: null, step: 0, editing: false, rating: 0,
   medicalRecords: [], medications: [], medicationIntakes: null, pendingAssessments: [], recordsTab: null, editingMedicine: null, pendingMedical: null, documentAiEnabled: false, aiProvider: "AI", previewUrl: null, uploadFile: null,
   deviceSource: null, deviceValues: {}, deviceTimes: {}, samples: [], deviceEpoch: 0, authEpoch: 0, busy: false, view: "dashboard" };
 let ble = null;
@@ -227,7 +261,7 @@ function errorAt(id, text = "") {
 function screen(name) {
   if (name !== "app") setNavDrawer(false, false);
   ["loading", "login", "onboarding", "app", "report"].forEach(key => $("#" + key + "-screen").classList.toggle("hidden", key !== name));
-  if (name !== "app") document.title = "GeneSense - Theo dõi sức khỏe";
+  if (name !== "app") document.title = "GeneSense - Sức khỏe gia đình và di truyền";
   window.scrollTo(0, 0);
 }
 const toDate = raw => { const value = String(raw ?? "").replace(/(\.\d{3})\d+/, "$1"); return new Date(value.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(value) ? value : value + "Z"); };
@@ -353,7 +387,7 @@ function setNavDrawer(open, restoreFocus = true) {
   scrim.setAttribute("aria-hidden", String(!open));
   drawer.toggleAttribute("inert", !open);
   toggle.setAttribute("aria-expanded", String(open));
-  toggle.setAttribute("aria-label", open ? "Đóng menu" : "Mở menu");
+  toggle.setAttribute("aria-label", open ? "Đóng menu điều hướng" : "Mở menu điều hướng");
   if (open) ($("#nav-close") || drawer).focus({ preventScroll: true });
   else if (restoreFocus && !$("#app-screen").classList.contains("hidden")) toggle.focus({ preventScroll: true });
 }
@@ -362,17 +396,18 @@ function navigate(view) {
   if (!state.user || !state.health) return;
   state.view = ["dashboard", "records", "history", "genetics", "profile"].includes(view) && !(state.viewing && view === "records") ? view : "dashboard";
   $$(".view").forEach(el => el.classList.toggle("hidden", el.id !== state.view + "-view"));
+  const activeNav = state.view === "genetics" ? "profile" : state.view;
   $$("nav [data-nav]").forEach(button => {
-    button.classList.toggle("active", button.dataset.nav === state.view || (state.view === "genetics" && button.dataset.nav === "profile" && Boolean(button.closest(".mobile-nav"))));
-    if (button.dataset.nav === state.view) button.setAttribute("aria-current", "page");
+    const active = button.dataset.nav === activeNav;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  const pageName = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Di truyền", profile: "Hồ sơ" }[state.view];
+  const pageName = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Gia đình và di truyền", profile: "Hồ sơ" }[state.view];
   document.title = pageName + " - GeneSense";
-  $("#menu-page").textContent = pageName;
   window.history.replaceState(null, "", "#" + state.view);
   if (state.view === "profile") renderProfile();
-  if (state.view === "genetics") renderGenetics();
+  if (state.view === "genetics") { renderGenetics(); if (!state.viewing) void refreshFamilyLinks(); }
   if (state.view === "records") { renderMedicalRecords(); renderRecordsTab(); }
   if (state.view === "history") { renderHistory(); renderTips(); renderTrends(); if (!state.viewing) void refreshRecords(); }
   window.scrollTo(0, 0);
@@ -400,14 +435,28 @@ function fillWizard(health = null) {
     $("#family-" + side).innerHTML = MEMBERS.filter(m => m.side === side).map(member => {
       const saved = health?.family_history?.find(item => item.member_id === member.id);
       const knowledge = saved?.knowledge || "unknown";
-      return '<div class="family-member" data-member="' + member.id + '"><div class="member-top"><strong>' + member.label + '</strong><label class="visually-hidden" for="knowledge-' + member.id + '">Tiền sử ' + member.label + '</label><select id="knowledge-' + member.id + '" data-knowledge><option value="unknown"' + (knowledge === "unknown" ? " selected" : "") + '>Chưa rõ</option><option value="none"' + (knowledge === "none" ? " selected" : "") + '>Không có bệnh đã biết</option><option value="known"' + (knowledge === "known" ? " selected" : "") + '>Có bệnh đã biết</option></select></div><div class="chips"' + (knowledge === "known" ? "" : " hidden") + '>' + conditionChips(member.id, saved?.conditions) + "</div>" + (member.id === "sibling" ? '<label class="member-count"' + (knowledge === "known" ? "" : " hidden") + '>Số anh chị em mắc bệnh<input type="number" inputmode="numeric" data-affected min="1" max="10" value="' + (saved?.affected_count || 1) + '"></label>' +
-        '<label class="member-count"' + (knowledge === "known" ? "" : " hidden") + '>Trong đó anh, em trai<input type="number" inputmode="numeric" data-brothers min="0" max="10" value="' + (saved?.affected_brothers || 0) + '"></label>' : "") + "</div>";
+      const source = saved?.source || (knowledge === "unknown" ? "unknown" : "self_reported");
+      const sourceOptions = FAMILY_HISTORY_SOURCES.filter(([value]) => value !== "unknown").map(([value, label]) =>
+        '<option value="' + value + '"' + (source === value ? " selected" : "") + ">" + label + "</option>").join("");
+      const siblingFields = member.id === "sibling"
+        ? '<label class="member-count"' + (knowledge === "known" ? "" : " hidden") + '>Số anh chị em mắc bệnh<input type="number" inputmode="numeric" data-affected min="1" max="10" value="' + (saved?.affected_count || 1) + '"></label>' +
+          '<label class="member-count"' + (knowledge === "known" ? "" : " hidden") + '>Trong đó anh, em trai<input type="number" inputmode="numeric" data-brothers min="0" max="10" value="' + (saved?.affected_brothers || 0) + '"></label>'
+        : "";
+      const ageLabel = member.id === "sibling" ? "Tuổi chẩn đoán sớm nhất (nếu nhớ)" : "Tuổi khi được chẩn đoán (nếu nhớ)";
+      return '<div class="family-member" data-member="' + member.id + '"><div class="member-top"><strong>' + member.label + '</strong><label class="visually-hidden" for="knowledge-' + member.id + '">Tiền sử ' + member.label + '</label><select id="knowledge-' + member.id + '" data-knowledge><option value="unknown"' + (knowledge === "unknown" ? " selected" : "") + '>Chưa rõ</option><option value="none"' + (knowledge === "none" ? " selected" : "") + '>Không có bệnh đã biết</option><option value="known"' + (knowledge === "known" ? " selected" : "") + '>Có bệnh đã biết</option></select></div><div class="chips"' + (knowledge === "known" ? "" : " hidden") + '>' + conditionChips(member.id, saved?.conditions) + "</div>" + siblingFields +
+        '<label class="member-count"' + (knowledge === "known" ? "" : " hidden") + '>' + ageLabel + '<input type="number" inputmode="numeric" data-diagnosis-age min="1" max="120" value="' + (saved?.age_at_diagnosis || "") + '"></label>' +
+        '<div class="family-provenance"' + (knowledge === "unknown" ? " hidden" : "") + '><label>Nguồn thông tin<select data-history-source>' + sourceOptions + '</select></label><label>Lần gần nhất hỏi hoặc đối chiếu (nếu nhớ)<input type="date" data-last-confirmed value="' + esc(saved?.last_confirmed_on || "") + '"></label><p class="note">Nguồn chỉ giúp biết thông tin đến từ đâu; không xác nhận nguyên nhân di truyền.</p></div></div>';
     }).join("");
   }
   const hasHereditary = (who, key) => who === "self" ? p?.known_conditions?.includes(key) : health?.family_history?.find(item => item.member_id === who)?.conditions?.includes(key);
+  const uncle = health?.family_history?.find(item => item.member_id === "maternal-uncle");
+  const uncleSource = uncle?.source || "self_reported";
+  const uncleSourceOptions = FAMILY_HISTORY_SOURCES.filter(([value]) => value !== "unknown").map(([value, label]) =>
+    '<option value="' + value + '"' + (uncleSource === value ? " selected" : "") + ">" + label + "</option>").join("");
   $("#hereditary-questions").innerHTML = HEREDITARY.map(([key, label]) => '<fieldset class="chip-field" data-hereditary="' + key + '"><legend>' + label + '</legend><div class="chips">' +
     HEREDITARY_WHO.filter(([who]) => key !== "ovarian_cancer" || !NOT_FOR_OVARIAN.has(who)).map(([who, name]) =>
-      '<label><input type="checkbox" value="' + who + '"' + (hasHereditary(who, key) ? " checked" : "") + "><span>" + name + "</span></label>").join("") + "</div></fieldset>").join("");
+      '<label><input type="checkbox" value="' + who + '"' + (hasHereditary(who, key) ? " checked" : "") + "><span>" + name + "</span></label>").join("") + "</div></fieldset>").join("") +
+    '<div class="member-count" id="maternal-uncle-age-field"' + (uncle?.conditions?.length ? "" : " hidden") + '><label>Tuổi khi cậu được chẩn đoán (nếu nhớ)<input type="number" inputmode="numeric" data-maternal-uncle-age min="1" max="120" value="' + (uncle?.age_at_diagnosis || "") + '"></label><div class="family-provenance"><label>Nguồn thông tin<select data-maternal-uncle-source>' + uncleSourceOptions + '</select></label><label>Lần gần nhất hỏi hoặc đối chiếu (nếu nhớ)<input type="date" data-maternal-uncle-confirmed value="' + esc(uncle?.last_confirmed_on || "") + '"></label></div></div>';
   const related = health?.parents_related || "unknown";
   $("#parents-related").innerHTML = [["yes", "Có"], ["no", "Không"], ["unknown", "Không rõ"]].map(([value, label]) =>
     '<label><input type="radio" name="parents_related" value="' + value + '"' + (value === related ? " checked" : "") + "><span>" + label + "</span></label>").join("");
@@ -459,10 +508,16 @@ function readWizard() {
       const knowledge = extra.length ? "known" : el.querySelector("select").value;
       const cardKnown = el.querySelector("select").value === "known";
       const affected = knowledge === "known" ? Math.min(10, Math.max(1, Math.round(Number(el.querySelector("[data-affected]")?.value) || 1))) : 1;
+      const diagnosisAge = el.querySelector("[data-diagnosis-age]")?.value;
       return { member_id: m.id, relation: m.relation, side: m.side, knowledge, affected_count: affected,
+        source: knowledge === "unknown" ? "unknown" : (el.querySelector("[data-history-source]")?.value || "self_reported"),
+        last_confirmed_on: knowledge === "unknown" ? null : (el.querySelector("[data-last-confirmed]")?.value || null),
+        age_at_diagnosis: knowledge === "known" && diagnosisAge ? Number(diagnosisAge) : null,
         affected_brothers: m.id === "sibling" && knowledge === "known" ? Math.min(affected, Math.max(0, Math.round(Number(el.querySelector("[data-brothers]")?.value) || 0))) : 0,
         conditions: [...(cardKnown ? [...el.querySelectorAll("input[type=checkbox]:checked")].map(box => box.value) : []), ...extra] };
-    }), ...(hereditaryFor("maternal-uncle").length ? [{ member_id: "maternal-uncle", relation: "uncle", side: "maternal", knowledge: "known", affected_count: 1, conditions: hereditaryFor("maternal-uncle") }] : [])],
+    }), ...(hereditaryFor("maternal-uncle").length ? [{ member_id: "maternal-uncle", relation: "uncle", side: "maternal", knowledge: "known", affected_count: 1,
+      source: $("[data-maternal-uncle-source]")?.value || "self_reported", last_confirmed_on: $("[data-maternal-uncle-confirmed]")?.value || null,
+      age_at_diagnosis: Number($("[data-maternal-uncle-age]").value) || null, conditions: hereditaryFor("maternal-uncle") }] : [])],
     parents_related: $('input[name="parents_related"]:checked')?.value || "unknown",
     personal_notes: $("#personal-notes").value.trim(), paternal_notes: $("#paternal-notes").value.trim(), maternal_notes: $("#maternal-notes").value.trim(),
     ai_consent: $("#ai-consent").checked, share_medications: Boolean(state.health?.share_medications), health_consent: $("#health-consent").checked,
@@ -490,7 +545,7 @@ async function nextStep(event) {
     state.editing = false;
     personalize();
     screen("app");
-    await Promise.all([refreshRecords(), refreshCare(), refreshRisk()]);
+    await Promise.all([refreshRecords(), refreshCare(), refreshFamilyLinks(), refreshRisk()]);
     navigate(wasEditing ? state.editReturn : "dashboard");
     toast(wasEditing ? "Đã lưu hồ sơ." : "Đã lưu hồ sơ. Bạn có thể ghi chỉ số đầu tiên.");
     offerDeviceImport();
@@ -524,8 +579,8 @@ function renderMetrics() {
   grid.innerHTML = METRICS.map(m => {
     const [level, status] = statusOf(m.key, values);
     const measured = values[m.key] != null;
-    const flag = measured ? '<span class="reading-flag tag ' + level + '">' + status + '</span>' : '<span class="reading-placeholder">Chưa có số đo được ghi</span>';
-    return '<div class="reading"><span class="metric-icon">' + icon(m.icon) + '</span><span class="reading-name">' + m.label + (glucoseWhen(m.key, values) ? " <small>" + glucoseWhen(m.key, values) + "</small>" : "") + '</span>' + (measured ? '<span class="reading-value">' + valueOf(m.key, values) + '<small>' + m.unit + '</small></span>' + rangeBar(m.key, values[m.key]) : '<span class="reading-value empty">Chưa đo</span>') + flag + '</div>';
+    const flag = measured ? '<span class="reading-flag tag ' + level + '">' + status + '</span>' : "";
+    return '<div class="reading"><span class="metric-icon">' + icon(m.icon) + '</span><span class="reading-name">' + m.label + (glucoseWhen(m.key, values) ? " <small>" + glucoseWhen(m.key, values) + "</small>" : "") + '</span>' + (measured ? '<span class="reading-value">' + valueOf(m.key, values) + '<small>' + m.unit + '</small></span>' + rangeBar(m.key, values[m.key]) + flag : '<span class="reading-value empty">Chưa có số đo</span>') + '</div>';
   }).join("");
   placeRanges(grid);
   // Keep emergency values immediately readable; other cards enter only on their first viewport visit.
@@ -603,10 +658,12 @@ function renderDashboard() {
   const recent = r && !isEmergency(r) ? recentEmergency() : null;
   const level = r ? (recent ? "watch" : levelOf(r)) : "neutral";
   renderEmergency(r);
+  $("#dashboard-shortcuts").classList.toggle("hidden", isEmergency(r));
+  $("#status-panel").dataset.level = level;
   const status = $("#risk-status");
   status.className = "status-word " + ({ emergency: "alert", watch: "attention" }[level] || level);
   status.textContent = r ? LEVELS[level] : "Chưa có dữ liệu";
-  $("#risk-summary").textContent = !r ? "Nhập chỉ số từ máy đo để xem đánh giá đầu tiên." : level === "emergency" ? SUMMARY_FALLBACK.emergency : level === "watch" ? "24 giờ qua có lần đo ở mức nguy hiểm." : r.insight.summary || SUMMARY_FALLBACK[level];
+  $("#risk-summary").textContent = !r ? "Nhập số đo đầu tiên để bắt đầu theo dõi." : level === "emergency" ? SUMMARY_FALLBACK.emergency : level === "watch" ? "24 giờ qua có lần đo ở mức nguy hiểm." : r.insight.summary || SUMMARY_FALLBACK[level];
   $("#result-date").textContent = r ? "Đo lúc " + date(r.created_at) + ", " + SOURCE_NAMES[r.measurement_source].toLowerCase() : "";
   // While the emergency panel is up it is the only call to action; the score would read as reassurance.
   $("#score-details").classList.toggle("hidden", !r || level === "emergency");
@@ -617,7 +674,7 @@ function renderDashboard() {
   renderScores();
   renderMetrics();
   renderTips();
-  renderMedicineLink();
+  renderTodayMedicineSummary();
 }
 function showHistoryTab(tab) {
   const charts = tab === "charts";
@@ -633,6 +690,10 @@ function showHistoryTab(tab) {
 // Charts show what the readings table shows: whole numbers, except SpO₂ which keeps one decimal.
 const chartValue = (key, value) => key === "spo2" ? value : Math.round(value);
 function renderTrends() {
+  const hasReadings = state.records.length > 0;
+  $("#history-chart-empty").classList.toggle("hidden", hasReadings);
+  $("#history-chart-content").classList.toggle("hidden", !hasReadings);
+  if (!hasReadings) return;
   const source = state.result?.measurement_source;
   // Every source shares one chart: typed-in, Bluetooth and sample readings.
   const rows = state.records.slice(0, 30).reverse();
@@ -675,6 +736,7 @@ async function refreshRecords() {
     if (epoch !== state.authEpoch) return;
     state.records = rows; state.result = result; state.weeklyBP = weeklyBP;
     renderDashboard(); renderHistory();
+    if (state.view === "history") renderTrends();
   } catch (error) {
     if (epoch !== state.authEpoch) return;
     toast(error.message, "error");
@@ -714,7 +776,8 @@ function renderHistory() {
   const filter = $("#history-filter").value;
   const records = state.records.filter(row => filter === "all" || (filter === "simulation" ? !isReal(row) : isReal(row)));
   if (!records.length) {
-    $("#history-list").innerHTML = '<div class="empty-state"><h3>' + (state.records.length ? "Không có lần đo phù hợp" : "Chưa có lần đo nào") + '</h3><p>Các lần đo sẽ hiện ở đây sau khi bạn ghi chỉ số.</p><button class="btn outline" id="history-add">Ghi chỉ số</button></div>';
+    $("#history-list").innerHTML = '<div class="empty-state history-list-empty"><span class="history-list-empty-icon" aria-hidden="true">' + icon("history") + '</span><h3>' + (state.records.length ? "Không có lần đo phù hợp" : "Chưa có lần đo nào") + '</h3><p>Các lần đo sẽ hiện ở đây sau khi bạn ghi chỉ số.</p><button class="btn primary" id="history-add"><span data-icon="plus"></span>Ghi số đo đầu tiên</button></div>';
+    hydrateIcons($("#history-list"));
     return;
   }
   // One card per reading, one line per value. The mark beside a value says how that value stands (shape and colour,
@@ -761,8 +824,10 @@ function familyNode(h, member, extraClass = "") {
   const saved = h.family_history.find(row => row.member_id === member.id);
   const known = saved?.knowledge === "known" && saved.conditions?.length;
   const kind = known ? "known" : saved?.knowledge === "none" ? "none" : "unknown";
-  const text = known ? (saved.affected_count > 1 ? saved.affected_count + " người: " : "") + saved.conditions.map(conditionName).join(", ") : kind === "none" ? "Không có bệnh đã biết" : "Chưa rõ";
-  const content = '<span class="ft-rel">' + member.label + '</span><span class="ft-state">' + esc(text) + "</span>";
+  const text = known ? (saved.affected_count > 1 ? saved.affected_count + " người: " : "") + saved.conditions.map(conditionName).join(", ") + (saved.age_at_diagnosis ? " · chẩn đoán từ " + saved.age_at_diagnosis + " tuổi" : "") : kind === "none" ? "Không có bệnh đã biết" : "Chưa rõ";
+  const provenance = saved?.knowledge && saved.knowledge !== "unknown"
+    ? '<span class="ft-provenance">' + esc(FAMILY_HISTORY_SOURCE_LABEL[saved.source] || "Tôi tự khai") + (saved.last_confirmed_on ? " · " + esc(date(saved.last_confirmed_on, false)) : "") + "</span>" : "";
+  const content = '<span class="ft-rel">' + member.label + '</span><span class="ft-state">' + esc(text) + "</span>" + provenance;
   return state.viewing
     ? '<div class="ft-node ' + kind + " " + extraClass + '">' + content + "</div>"
     : '<button type="button" class="ft-node ft-edit-node own-only ' + kind + " " + extraClass + '" data-edit-member="' + member.id + '" aria-label="Sửa tiền sử của ' + esc(member.label) + '">' + content + "</button>";
@@ -813,19 +878,18 @@ function renderProfile() {
       "<div><dt>Bệnh đã chẩn đoán</dt><dd>" + esc(conditions.join(", ") || "Không khai báo") + "</dd></div><div><dt>Hút thuốc</dt><dd>" + (p.smoker ? "Có" : "Không") + "</dd></div>" +
       (state.viewing ? "" : "<div><dt>Dùng AI giải thích kết quả</dt><dd>" + (h.ai_consent ? "Đã cho phép" : "Chưa cho phép") + "</dd></div>") +
     "</dl>" + (h.personal_notes ? "<h3>Ghi chú</h3><p>" + esc(h.personal_notes) + "</p>" : "") + "</article>" +
-    '<button class="profile-genetics-link profile-genetics-top" data-nav="genetics"><span class="profile-genetics-icon" data-icon="family"></span><span class="profile-genetics-copy"><strong>Di truyền và sơ đồ gia đình</strong><small>Xem nguy cơ theo từng bệnh</small></span><span class="profile-genetics-arrow" data-icon="chevron"></span></button>' +
-    '<article class="panel"><h2>Tiền sử bệnh trong gia đình</h2><div class="ft-summary">' + familySummary(h) + '</div></article>' +
+    '<section class="section profile-family-section" aria-labelledby="profile-family-title"><div class="section-heading"><h2 id="profile-family-title">Gia đình & di truyền</h2></div>' +
+    '<article class="panel profile-family-card"><div class="ft-summary">' + familySummary(h) + '</div>' +
+    '<button class="profile-genetics-link" data-nav="genetics"><span class="profile-genetics-icon" data-icon="family"></span><span class="profile-genetics-copy"><strong>Hồ sơ di truyền gia đình</strong><small>Phả hệ · bệnh trong gia đình · kết quả xét nghiệm</small></span><span class="profile-genetics-arrow" data-icon="chevron"></span></button></article></section>' +
     (state.viewing ? sharedMedicationPanel() : "");
   hydrateIcons($("#profile-content"));
   if (!state.viewing) renderAvatar();
 }
 
-// Family-risk tab: a level per condition from who in the family has it, computed on the server from the current profile.
-// tone = colour and shape, bars = filled steps of the 3-step meter. Family levels stop at amber:
-// red is kept for dangerous readings, so "Rất cao" and "Cao" differ by word and meter, not by colour.
+// Family-history grouping, not an individual disease probability. The meter summarizes only how many/which relatives were reported.
 const RISK_LEVELS = {
-  very_high: { tone: "attention", label: "Rất cao", bars: 3 }, high: { tone: "attention", label: "Cao", bars: 2 }, moderate: { tone: "moderate", label: "Trung bình", bars: 1 },
-  diagnosed: { tone: "diagnosed", label: "Đã được chẩn đoán" }, unknown: { tone: "neutral", label: "Chưa đủ thông tin" }, none: { tone: "neutral", label: "Chưa ghi nhận" },
+  very_high: { tone: "attention", label: "Nhiều người thân", bars: 3 }, high: { tone: "attention", label: "Có người thân gần", bars: 2 }, moderate: { tone: "moderate", label: "Có ông/bà", bars: 1 },
+  diagnosed: { tone: "diagnosed", label: "Đã khai báo chẩn đoán" }, unknown: { tone: "neutral", label: "Chưa rõ tiền sử" }, none: { tone: "neutral", label: "Chưa ghi nhận" },
 };
 const riskLevel = level => '<span class="status-word risk-level ' + RISK_LEVELS[level].tone + '">' + RISK_LEVELS[level].label + "</span>";
 const riskMeter = level => '<span class="risk-meter ' + RISK_LEVELS[level].tone + '" aria-hidden="true">' + [1, 2, 3].map(n => "<i" + (n <= RISK_LEVELS[level].bars ? ' class="on"' : "") + "></i>").join("") + "</span>";
@@ -861,7 +925,55 @@ function renderScores() {
   $("#score-family-note").textContent = unknown ? "Còn " + unknown + " người thân chưa rõ tiền sử, chưa được tính vào điểm tiền sử gia đình." : "";
   $("#score-family-note").classList.toggle("hidden", !unknown);
 }
+const FAMILY_RELATIONS = [["parent", "Cha/mẹ"], ["child", "Con"], ["sibling", "Anh/chị/em ruột"], ["grandparent", "Ông/bà"], ["grandchild", "Cháu"], ["other", "Người thân khác"]];
+function renderFamilyLinks() {
+  const host = $("#family-links-content");
+  if (!host) return;
+  const relationOptions = FAMILY_RELATIONS.map(([id, label]) => '<option value="' + id + '">' + label + "</option>").join("");
+  const invite = state.familyInviteCode
+    ? '<div class="family-invite-code"><strong>' + esc(state.familyInviteCode.code.slice(0, 4) + " " + state.familyInviteCode.code.slice(4)) +
+      '</strong><span>Mã dùng một lần · hết hạn ' + esc(date(state.familyInviteCode.expires_at)) + '</span><small>Người bạn mời: ' + esc(state.familyInviteCode.relative_relation_label) + '</small></div>'
+    : "";
+  const preview = state.familyInvitePreview
+    ? '<div class="family-invite-preview"><p><strong>' + esc(state.familyInvitePreview.display_name) + '</strong> xác nhận họ là <strong>' + esc(state.familyInvitePreview.inviter_relation_label) + '</strong> của bạn.</p>' +
+      '<label class="check-label"><input id="family-confirm-relationship" type="checkbox"><span>Tôi xác nhận đây là quan hệ gia đình của mình.</span></label>' +
+      '<button type="button" class="btn primary" id="family-invite-accept" disabled>Đồng ý liên kết</button></div>'
+    : "";
+  const relatives = state.familyLinks.relatives.length
+    ? '<div class="family-link-list">' + state.familyLinks.relatives.map(relative => {
+      const conditions = (relative.conditions || []).map(conditionName).filter(Boolean);
+      const shared = relative.their_share
+        ? '<p class="family-shared-conditions"><strong>Bệnh đã tự khai báo:</strong> ' + esc(conditions.join(", ") || "Chưa khai báo bệnh trong nhóm này") + '</p>'
+        : '<p class="note">Người thân chưa bật chia sẻ bệnh di truyền.</p>';
+      return '<article class="family-link-card"><div class="family-link-head"><div><h3>' + esc(relative.display_name) + '</h3><p class="note">' + esc(relative.relation_label) + ' · Đã xác nhận quan hệ</p></div>' +
+        '<button type="button" class="delete-record" data-family-remove="' + esc(relative.link_id) + '">Ngắt liên kết</button></div>' + shared +
+        '<label class="check-label family-sharing-toggle"><input type="checkbox" data-family-share="' + esc(relative.link_id) + '"' + (relative.my_share ? " checked" : "") + '><span>Cho phép người thân xem bệnh di truyền tôi đã tự khai báo</span></label>' +
+        '<p class="note family-share-note">Chỉ chia sẻ tên bệnh đã khai báo trong nhóm di truyền; không chia sẻ xét nghiệm, thuốc hay hồ sơ khác. Đây không phải xác nhận gen hoặc chẩn đoán.</p></article>';
+    }).join("") + "</div>"
+    : '<p class="note">Chưa có tài khoản người thân nào được liên kết.</p>';
+  host.innerHTML = '<section class="section genetics-section family-connections-section" aria-labelledby="family-connections-title">' +
+    '<div class="section-heading"><h2 id="family-connections-title">Liên kết người thân</h2></div>' +
+    '<p class="note">Hai bên xác nhận quan hệ. Mỗi tài khoản tự chọn có chia sẻ bệnh di truyền đã khai báo hay không.</p>' +
+    '<div class="panel family-invite-panel"><h3>Mời người thân</h3><label for="family-relation-select">Người bạn mời là gì của bạn?</label><div class="family-invite-controls"><select id="family-relation-select">' + relationOptions + '</select><button type="button" class="btn outline" id="family-create-invite">Tạo mã mời</button></div>' + invite + '</div>' +
+    '<details id="family-join-panel" class="panel family-join-panel"><summary>Nhập mã người thân gửi cho bạn</summary><form id="family-invite-preview-form" class="care-form"><label>Mã mời<input id="family-invite-code" value="' + esc(state.familyInvitePreview?.code || "") + '" autocomplete="off" autocapitalize="characters" maxlength="16" required></label><button class="btn primary" type="submit">Xem lời mời</button></form>' +
+    '<p id="family-invite-error" class="inline-message error hidden" role="alert"></p>' + preview + '</details>' +
+    '<div class="family-links-heading"><h3>Người thân đã liên kết</h3></div>' + relatives +
+    '<p class="note family-privacy-note">Chỉ liên kết trực tiếp giữa hai tài khoản. Bệnh lấy từ hồ sơ hiện tại và cập nhật khi bạn mở lại mục này; không tự động sửa hồ sơ gia đình hay suy đoán bệnh của người khác.</p></section>';
+}
+async function refreshFamilyLinks() {
+  const epoch = state.authEpoch;
+  try {
+    const links = await api.familyLinks();
+    if (epoch !== state.authEpoch) return;
+    state.familyLinks = links;
+  } catch {
+    if (epoch !== state.authEpoch) return;
+    state.familyLinks = { relatives: [] };
+  }
+  renderFamilyLinks();
+}
 function renderGenetics() {
+  renderFamilyLinks();
   const h = state.health, p = h.profile;
   const member = id => MEMBERS.find(m => m.id === id);
   const conditions = p.known_conditions.map(conditionName).filter(Boolean);
@@ -870,33 +982,31 @@ function renderGenetics() {
   const rows = (state.risk?.conditions || []).slice().sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level));
   const of = (...levels) => rows.filter(row => levels.includes(row.level));
   const raised = of("very_high", "high", "moderate"), diagnosed = of("diagnosed"), rest = of("unknown", "none");
-  const high = of("very_high", "high").length;
   const allUnknown = rows.length > 0 && rows.every(row => row.level === "unknown");
   const edit = primary => '<button class="btn ' + (primary ? "primary" : "outline") + ' own-only" data-edit-family>' + (primary ? "Cập nhật tiền sử gia đình" : "Sửa tiền sử gia đình") + "</button>";
-  $("#genetics-lead").textContent = !state.risk ? (state.riskFailed ? "" : "Đang tải…") : allUnknown ? "Chưa đủ thông tin về tiền sử gia đình."
-    : raised.length ? raised.length + " bệnh có người thân mắc" + (high ? ", trong đó " + high + " ở mức cao." : ".") : "Chưa ghi nhận bệnh nào có người thân mắc.";
+  $("#genetics-lead").textContent = "Tiền sử gia đình, xét nghiệm và việc cần trao đổi với bác sĩ — trong một nơi.";
   // The disease name comes first in the markup so heading navigation reads name then level; CSS shows the level strip on top.
-  const card = row => { const level = RISK_LEVELS[row.level]; return '<article class="risk-card ' + level.tone + '"><div class="risk-card-body"><h3>' + conditionName(row.condition) + '<span class="visually-hidden">, ' + (level.bars ? "mức " : "") + level.label.toLowerCase() + "</span></h3>" +
-    (row.level === "diagnosed" ? "<p>Bệnh này đã có trong hồ sơ cá nhân.</p>" : "") + riskWho(row) + (row.advice ? (matchMedia("(max-width: 760px)").matches ? '<details class="record-details risk-do-fold"><summary>Nên làm</summary><p class="risk-do">' + esc(row.advice) + "</p></details>" : '<p class="risk-do"><strong>Nên làm:</strong> ' + esc(row.advice) + "</p>") : "") +
+  const card = row => { const level = RISK_LEVELS[row.level]; return '<article class="risk-card ' + level.tone + '"><div class="risk-card-body"><h3>' + conditionName(row.condition) + '<span class="visually-hidden">, tiền sử: ' + level.label.toLowerCase() + "</span></h3>" +
+    (row.level === "diagnosed" ? "<p>Bạn đã khai báo bệnh này trong hồ sơ.</p>" : "") + riskWho(row) + (row.advice ? (matchMedia("(max-width: 760px)").matches ? '<details class="record-details risk-do-fold"><summary>Nên làm</summary><p class="risk-do">' + esc(row.advice) + "</p></details>" : '<p class="risk-do"><strong>Nên làm:</strong> ' + esc(row.advice) + "</p>") : "") +
     '</div><div class="risk-card-top" aria-hidden="true">' + riskLevel(row.level) + (level.bars ? riskMeter(row.level) : "") + "</div></article>"; };
   const section = (id, title, body, action = "") => '<section class="section genetics-section" aria-labelledby="genetics-' + id + '"><div class="section-heading"><h2 id="genetics-' + id + '">' + title + "</h2>" + action + "</div>" + body + "</section>";
-  const key = '<div class="panel risk-key"><h3>Cách đọc mức nguy cơ</h3><ul>' +
+  const key = '<details class="panel risk-key genetics-fold"><summary>Cách xếp nhóm tiền sử</summary><p class="note">Đây là phân nhóm minh họa theo số lượng và quan hệ người thân được khai báo — không phải xác suất mắc bệnh hay kết luận di truyền.</p><ul>' +
     "<li>" + riskLevel("very_high") + riskMeter("very_high") + "<span>Từ hai người trong số bố, mẹ, anh chị em mắc bệnh. Hoặc một người trong số đó và thêm ông hoặc bà.</span></li>" +
     "<li>" + riskLevel("high") + riskMeter("high") + "<span>Một người trong số bố, mẹ, anh chị em mắc bệnh. Hoặc hai ông bà cùng một bên.</span></li>" +
-    "<li>" + riskLevel("moderate") + riskMeter("moderate") + "<span>Chỉ có ông hoặc bà mắc bệnh.</span></li></ul></div>";
+    "<li>" + riskLevel("moderate") + riskMeter("moderate") + "<span>Chỉ có ông hoặc bà mắc bệnh.</span></li></ul></details>";
   const restList = '<div class="panel risk-rest">' + rest.map(row => '<div class="risk-rest-row"><strong>' + conditionName(row.condition) + "</strong>" + riskLevel(row.level) + "</div>").join("") + "</div>";
-  const unknownCount = state.risk?.relatives_unknown || 0;
+  const familyNote = '<p class="note genetics-method-note">Phần này tổng hợp bệnh mạn tính thường gặp theo người thân đã khai báo. Mức chỉ dựa trên số lượng và quan hệ trong gia đình; ứng dụng chưa xét tuổi khởi phát, hồ sơ xét nghiệm hay nguyên nhân gen.</p>';
   const risk = !state.risk
     ? (state.riskFailed ? '<article class="panel empty-state"><h2>Chưa tải được mức nguy cơ</h2><p>Hồ sơ của bạn vẫn được lưu. Hãy kiểm tra kết nối mạng rồi thử lại.</p><button class="btn outline" id="retry-risk">Thử lại</button></article>' : "")
     : allUnknown
-      ? '<article class="panel"><h2>' + unknownCount + " người thân chưa rõ tiền sử</h2><p>Khi chưa biết người thân có bệnh gì, ứng dụng chưa thể xếp mức nguy cơ. Hãy hỏi bố mẹ, anh chị em rồi cập nhật.</p>" + edit(true) + "</article>" +
-        section("rest", "Các bệnh được theo dõi", restList)
-      : (raised.length || diagnosed.length ? '<p class="genetics-reassure">Tiền sử gia đình không quyết định tất cả. Lối sống và việc theo dõi đều đặn vẫn làm thay đổi nguy cơ.</p>' : "") +
-        (raised.length ? section("raised", "Bệnh có người thân mắc", '<div class="risk-grid">' + raised.map(card).join("") + "</div>" + key) : "") +
-        (diagnosed.length ? section("diagnosed", "Bệnh đã được chẩn đoán", '<div class="risk-grid">' + diagnosed.map(card).join("") + "</div>") : "") +
-        (rest.length ? section("rest", "Các bệnh khác", restList) : "");
-  $("#genetics-content").innerHTML = risk + (state.risk ? hereditarySection(section) : "") +
-    section("tree", "Sơ đồ gia đình", '<article class="panel"><div class="ft-summary">' + familySummary(h) + "</div>" +
+      ? section("rest", "Tiền sử các bệnh thường gặp", '<details class="panel genetics-fold"><summary>Xem các bệnh chưa rõ tiền sử</summary><p class="note">Nếu chưa biết, giữ “Chưa rõ”; không nên đoán.</p>' + restList + '</details>')
+      : (raised.length || diagnosed.length ? '<p class="genetics-reassure">Tiền sử gia đình là một phần thông tin sức khỏe — không cho biết chắc chắn ai sẽ mắc bệnh.</p>' : "") +
+        (raised.length ? section("raised", "Bệnh có tiền sử trong gia đình", familyNote + '<div class="risk-grid">' + raised.map(card).join("") + "</div>" + key) : "") +
+        (diagnosed.length ? section("diagnosed", "Bệnh bạn đã khai báo được chẩn đoán", '<div class="risk-grid">' + diagnosed.map(card).join("") + "</div>") : "") +
+        (rest.length ? section("rest", "Các bệnh chưa ghi nhận hoặc chưa rõ", restList) : "");
+  const introduction = '<section class="section genetics-section genetics-intro-section" aria-labelledby="genetics-intro-title"><article class="panel genetics-intro"><span class="genetics-eyebrow">HỒ SƠ DI TRUYỀN</span><h2 id="genetics-intro-title">Hiểu sức khỏe qua các thế hệ</h2><p>Ghi lại bệnh trong gia đình, lưu phiếu xét nghiệm và chuẩn bị câu hỏi cho buổi tư vấn. <strong>Tiền sử gia đình không phải kết quả xét nghiệm gen.</strong></p><div class="genetics-distinction"><span><strong>Tiền sử gia đình</strong><small>Thông tin người thân khai báo</small></span><span aria-hidden="true">≠</span><span><strong>Kết quả xét nghiệm</strong><small>Nội dung trên phiếu đã lưu</small></span></div>' + edit(true) + '</article></section>';
+  $("#genetics-content").innerHTML = introduction + geneticsOverview(h) + geneticsDocuments(section) + geneticsQuestions(section) + (state.risk ? hereditarySection(section) : "") + risk +
+    section("tree", "Sơ đồ gia đình", '<p class="note genetics-tree-note">Sơ đồ minh họa bạn, bố mẹ, anh chị em và ông bà theo dữ liệu đã khai báo. Thông tin chưa rõ không được xem là không có bệnh.</p><details class="panel genetics-fold genetics-family-fold"><summary>Xem sơ đồ 3 thế hệ</summary><div class="genetics-family-content"><div class="ft-summary">' + geneticsFamilySummary(h) + "</div>" +
     '<div class="family-tree" role="group" aria-label="Sơ đồ gia đình ba thế hệ">' +
       '<span class="ft-side ft-side-p">Bên nội</span><span class="ft-side ft-side-m">Bên ngoại</span>' +
       familyNode(h, member("paternal-grandfather"), "ft-pgf") + familyNode(h, member("paternal-grandmother"), "ft-pgm") +
@@ -906,28 +1016,112 @@ function renderGenetics() {
       '<span class="ft-join ft-join-c"></span><span class="ft-side ft-side-c">' + (state.viewing ? esc(h.display_name) : "Bạn") + " và anh chị em</span>" +
       '<div class="ft-children"><div class="ft-node you ' + (conditions.length ? "known" : "none") + '"><span class="ft-rel">' + (state.viewing ? esc(h.display_name) : "Bạn") + '</span><span class="ft-state">' + esc(conditions.join(", ") || "Không khai báo bệnh") + "</span></div>" + familyNode(h, member("sibling")) + "</div>" +
     "</div>" +
-    '<ul class="ft-legend"><li><span class="ft-key known"></span>Có bệnh đã biết</li><li><span class="ft-key none"></span>Không có bệnh đã biết</li><li><span class="ft-key unknown"></span>Chưa rõ</li></ul>' +
-    notes.map(([title, text]) => "<h3>Ghi chú " + title.toLowerCase() + "</h3><p>" + esc(text) + "</p>").join("") + "</article>", allUnknown ? "" : edit(false)) +
-    '<p class="note">Thông tin tham khảo để trao đổi với bác sĩ, không phải chẩn đoán hay kết quả xét nghiệm gen.</p>';
+    '<ul class="ft-legend"><li><span class="ft-key known"></span>Có bệnh</li><li><span class="ft-key none"></span>Chưa ghi nhận</li><li><span class="ft-key unknown"></span>Chưa rõ</li></ul>' +
+    (notes.length ? '<details class="record-details genetics-fold genetics-notes"><summary>Ghi chú gia đình</summary><ul>' + notes.map(([title, text]) => "<li><strong>" + esc(title) + ":</strong> " + esc(text) + "</li>").join("") + "</ul></details>" : "") + "</div></details>", allUnknown ? "" : edit(false)) +
+    geneticGuideMarkup() + '<p class="note genetics-disclaimer">Đây là bản tổng hợp thông tin tự khai và giấy tờ đã lưu, không phải chẩn đoán hay kết quả đọc ADN. Hãy trao đổi với bác sĩ hoặc chuyên gia di truyền trước khi quyết định xét nghiệm hay điều trị.</p>';
+}
+
+function geneticsOverview(h) {
+  const known = h.family_history.filter(row => row.knowledge === "known" && row.conditions?.length);
+  const unknown = MEMBERS.filter(member => !h.family_history.some(row => row.member_id === member.id && row.knowledge !== "unknown")).length;
+  const hereditary = (state.risk?.hereditary || []).filter(row => row.status === "ask_doctor").length;
+  const reports = state.viewing ? [] : state.medicalRecords.filter(record => record.analysis.document_type === "genetic_test_report");
+  const findings = reports.reduce((count, record) => count + (record.analysis.genetic_findings || []).length, 0);
+  const pendingReview = reports.reduce((count, record) => count + (record.analysis.genetic_findings || []).filter(finding => !finding.evidence_review_on).length, 0);
+  const steps = [
+    unknown && !state.viewing ? '<button type="button" class="genetics-next-step" data-edit-family><strong>Hỏi thêm ' + unknown + ' người thân chưa rõ</strong><span>Ghi bệnh và tuổi được chẩn đoán nếu gia đình biết.</span></button>' :
+    unknown ? '<div class="genetics-next-step"><strong>Còn ' + unknown + ' người thân chưa rõ</strong><span>Chủ hồ sơ có thể bổ sung khi biết thêm.</span></div>' :
+      '<div class="genetics-next-step"><strong>Tiền sử đã được khai báo</strong><span>Cập nhật khi gia đình có thông tin mới.</span></div>',
+    state.viewing ? '' : reports.length ? '<button type="button" class="genetics-next-step" data-open-genetic-record="' + esc(reports[0].id) + '"><strong>' + (pendingReview ? 'Còn ' + pendingReview + ' mục chưa ghi nhận đối chiếu' : 'Xem phiếu di truyền gần nhất') + '</strong><span>So với bản gốc và hỏi chuyên gia khi chưa rõ.</span></button>' :
+      '<button type="button" class="genetics-next-step" data-open-manual-genetics><strong>Nhập kết quả từ phiếu di truyền</strong><span>Chép gen, biến thể và kết luận từ phiếu gốc; không cần AI.</span></button>',
+    '<button type="button" class="genetics-next-step" data-open-genetics-summary><strong>' + (hereditary ? 'Chuẩn bị trao đổi về ' + hereditary + ' chủ đề' : 'Tạo phiếu mang đến bác sĩ') + '</strong><span>Tổng hợp tiền sử và kết quả đã lưu để cùng xem.</span></button>',
+  ].filter(Boolean).join('');
+  return '<section class="section genetics-section genetics-overview" aria-labelledby="genetics-overview-title"><div class="section-heading"><h2 id="genetics-overview-title">' + (state.viewing ? 'Hồ sơ di truyền của ' + esc(h.display_name) : 'Hồ sơ di truyền của bạn') + '</h2></div>' +
+    '<div class="genetics-overview-grid' + (state.viewing ? ' compact' : '') + '"><article class="panel genetics-overview-stat"><strong>' + known.length + '</strong><span>nhóm người thân có bệnh đã khai</span></article>' +
+    (state.viewing ? '<article class="panel genetics-overview-stat"><strong>' + hereditary + '</strong><span>chủ đề nên trao đổi với bác sĩ</span></article>' :
+      '<article class="panel genetics-overview-stat"><strong>' + reports.length + '</strong><span>phiếu xét nghiệm di truyền đã lưu</span></article>' +
+      '<article class="panel genetics-overview-stat"><strong>' + findings + '</strong><span>mục gen/biến thể chép từ phiếu</span></article>') + '</div>' +
+    '<div class="genetics-next-panel"><h3>Việc tiếp theo</h3><div class="genetics-next-list">' + steps + '</div></div>' +
+    '<p class="note genetics-overview-note">Các con số là dữ liệu đã khai hoặc đã lưu, không phải điểm nguy cơ hay chẩn đoán.</p></section>';
+}
+
+function geneticsDocuments(section) {
+  if (state.viewing) return '';
+  const reports = state.medicalRecords.filter(record => record.analysis.document_type === "genetic_test_report");
+  const content = reports.length ? '<div class="genetics-document-list">' + reports.map(record => {
+    const findings = record.analysis.genetic_findings || [];
+    const genes = [...new Set(findings.map(finding => finding.gene).filter(Boolean))];
+    const reviewed = findings.filter(finding => finding.evidence_review_on).length;
+    return '<article class="panel genetics-document"><div><span class="genetics-document-date">' + esc(record.analysis.document_date ? date(record.analysis.document_date, false) : date(record.created_at, false)) + '</span><h3>' + esc(record.analysis.title || 'Phiếu xét nghiệm di truyền') + '</h3><p>' + esc(genes.length ? 'Gen ghi trên phiếu: ' + genes.join(', ') : 'Chưa trích được tên gen từ phiếu') + '</p><small>' + (findings.length ? reviewed + '/' + findings.length + ' mục đã ghi nhận tự đối chiếu' : 'Chưa trích được mục biến thể có cấu trúc') + '</small></div><button type="button" class="btn outline" data-open-genetic-record="' + esc(record.id) + '">Xem phiếu</button></article>';
+  }).join('') + '</div>' : '<article class="panel genetics-document-empty"><p>Chưa có phiếu xét nghiệm di truyền đã lưu. Bạn có thể chép thông tin từ phiếu gốc' + (state.documentAiEnabled ? ' hoặc dùng AI đọc ảnh rồi tự kiểm tra' : '') + '.</p><div class="genetics-document-actions"><button type="button" class="btn primary" data-open-manual-genetics>Nhập từ phiếu</button>' + (state.documentAiEnabled ? '<button type="button" class="btn outline" data-open-upload>Chụp phiếu</button>' : '') + '</div></article>';
+  return section('documents', 'Kết quả xét nghiệm di truyền', content + '<p class="note">Kết quả nhập tay hoặc AI hỗ trợ đều cần đối chiếu với phiếu gốc. GeneSense không tự kết luận biến thể gây bệnh.</p>');
+}
+
+function geneticConsultationQuestions() {
+  const history = state.health.family_history || [];
+  const unknown = MEMBERS.filter(member => !history.some(row => row.member_id === member.id && row.knowledge !== "unknown")).length;
+  const flagged = (state.risk?.hereditary || []).filter(row => row.status === "ask_doctor");
+  const reports = state.viewing ? [] : state.medicalRecords.filter(record => record.analysis.document_type === "genetic_test_report");
+  const findings = reports.flatMap(record => record.analysis.genetic_findings || []);
+  const questions = [];
+  if (reports.length) questions.push("Kết luận trên phiếu xét nghiệm có ý nghĩa gì khi xét cùng triệu chứng và tiền sử gia đình?");
+  else if (!state.viewing) questions.push("Với tiền sử hiện tại, có cần xét nghiệm di truyền không? Nếu có, nên hỏi về loại xét nghiệm nào?");
+  if (findings.some(finding => /\bVUS\b|uncertain|chưa rõ|không rõ/i.test(finding.classification || "")))
+    questions.push("Phiếu có biến thể chưa rõ ý nghĩa: hiện nên hiểu và theo dõi lại kết luận này như thế nào?");
+  if (flagged.length) {
+    const topics = flagged.slice(0, 2).map(row => SCREENS[row.condition] || row.condition).join(" và ");
+    questions.push("Tiền sử liên quan " + topics + (flagged.length > 2 ? " và các mục khác" : "") + " có cần đánh giá chuyên khoa hoặc tư vấn di truyền không?");
+  }
+  if (unknown) questions.push("Nên hỏi thêm bệnh nào và tuổi chẩn đoán của " + unknown + " người thân chưa rõ tiền sử?");
+  questions.push("Thông tin nào nên chia sẻ với người thân, và cần bảo vệ quyền riêng tư ra sao?");
+  return questions;
+}
+
+function geneticsQuestions(section) {
+  return section("questions", "Câu hỏi cho buổi tư vấn di truyền", '<div class="panel genetics-questions"><p>Chọn câu phù hợp để trao đổi với bác sĩ hoặc chuyên gia di truyền. Đây là gợi ý chuẩn bị, không phải chỉ định xét nghiệm.</p><ol>' +
+    geneticConsultationQuestions().map(question => '<li>' + esc(question) + '</li>').join('') +
+    '</ol><div class="genetics-question-actions"><button type="button" class="btn outline" data-open-genetics-summary>Tạo phiếu tổng hợp</button><a href="https://medlineplus.gov/genetics/understanding/consult/expectations/" target="_blank" rel="noopener noreferrer">Tìm hiểu về tư vấn di truyền</a></div></div>');
+}
+
+function geneticsFamilySummary(h) {
+  const known = h.family_history.filter(row => row.knowledge === "known" && row.conditions?.length);
+  const people = known.reduce((sum, row) => sum + (row.affected_count || 1), 0);
+  const unknown = MEMBERS.length - h.family_history.filter(row => MEMBERS.some(member => member.id === row.member_id) && (row.knowledge === "known" || row.knowledge === "none")).length;
+  const recorded = people ? people + " người thân có bệnh được ghi nhận" : "Chưa ghi nhận bệnh trong gia đình";
+  return "<p><strong>" + esc(recorded) + "</strong>" + (unknown ? " · " + unknown + " người chưa rõ" : " · Đã khai báo đủ") + "</p>";
+}
+
+function geneticGuideMarkup() {
+  const cards = GENETIC_GUIDES.map(guide => '<details class="panel genetics-guide genetics-fold"><summary><span class="genetics-guide-heading"><strong>' + esc(guide.title) + '</strong><small>' + esc(guide.summary) +
+    '</small></span></summary><div class="genetics-guide-details"><p><strong>Di truyền:</strong> ' + esc(guide.inheritance) + '</p><p><strong>Bước tiếp theo:</strong> ' + esc(guide.next) + '</p></div><p class="genetics-source-label">Nguồn đọc thêm · MedlinePlus, Thư viện Y khoa Quốc gia Hoa Kỳ</p><div class="genetics-sources">' + guide.links.map(([label, url]) =>
+      '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(label) + '</a>').join("") +
+    '</div></details>').join("");
+  const terms = [["Gen", "Một đoạn ADN chứa thông tin để cơ thể tạo ra sản phẩm hoặc thực hiện chức năng."], ["Biến thể", "Một khác biệt trong ADN. Có biến thể lành tính, chưa rõ ý nghĩa hoặc liên quan bệnh; không phải biến thể nào cũng gây bệnh."], ["Người mang gen", "Người có một biến thể liên quan bệnh nhưng có thể không có triệu chứng. Ý nghĩa phụ thuộc gen và kiểu di truyền."], ["Phả hệ", "Sơ đồ quan hệ và tiền sử bệnh đã biết trong gia đình; không xác nhận nguyên nhân do gen hay tình trạng mang gen."]];
+  const glossary = '<details class="panel genetics-glossary genetics-fold"><summary>Giải nghĩa nhanh 4 thuật ngữ</summary><dl>' + terms.map(([term, meaning]) => '<div><dt>' + esc(term) + '</dt><dd>' + esc(meaning) + '</dd></div>').join("") + '</dl></details>';
+  return '<section class="section genetics-section" aria-labelledby="genetics-guides"><div class="section-heading"><h2 id="genetics-guides">Tìm hiểu bốn nhóm bệnh</h2></div><p class="note genetics-learning-note">Chạm vào từng mục để xem bệnh là gì, kiểu di truyền có thể gặp và câu hỏi nên mang tới buổi khám.</p><div class="genetics-guide-list">' + cards + '</div>' + glossary + '</section>';
 }
 
 // Single-gene hereditary conditions: flagged ones as cards, the others one line per status. Advice only, never a diagnosis.
 function hereditarySection(section) {
+  const compact = matchMedia("(max-width: 760px)").matches;
   const screens = state.risk?.hereditary || [];
   if (!screens.length) return "";
   const label = id => id === "sibling" ? "Anh chị em ruột" : HEREDITARY_WHO.find(([who]) => who === id)?.[1];
   const names = rows => rows.map(row => SCREENS[row.condition]).join(", ");
   const flagged = screens.filter(row => row.status === "ask_doctor");
+  const advice = row => compact
+    ? '<details class="record-details risk-do-fold"><summary>Nên làm</summary><p class="risk-do">' + esc(row.advice) + "</p></details>"
+    : '<p class="risk-do"><strong>Nên làm:</strong> ' + esc(row.advice) + "</p>";
   const card = row => '<article class="panel hereditary-card"><span class="tag info">' + icon("info") + "Nên hỏi bác sĩ</span><h3>" + SCREENS[row.condition] + "</h3>" +
-    '<p class="note">' + PATTERNS[row.pattern] + "</p>" + row.reasons.map(text => "<p>" + esc(text) + "</p>").join("") +
+    '<details class="record-details genetics-fold genetics-why"><summary>Vì sao cần lưu ý?</summary><p class="note">' + esc(PATTERNS[row.pattern]) + "</p>" + row.reasons.map(text => "<p>" + esc(text) + "</p>").join("") + "</details>" +
     (row.relatives.length ? '<p class="risk-who"><span class="risk-who-label">Người thân liên quan</span>' + row.relatives.map(id => "<span>" + esc(label(id) || id) + "</span>").join("") + "</p>" : "") +
-    '<p class="risk-do"><strong>Nên làm:</strong> ' + esc(row.advice) + "</p></article>";
+    advice(row) + "</article>";
   const line = (status, text, action = "") => { const rows = screens.filter(row => row.status === status); return rows.length ? "<p><strong>" + text + ":</strong> " + names(rows) + action + "</p>" : ""; };
-  const rest = line("diagnosed", "Đã được chẩn đoán") + line("not_seen", "Chưa thấy dấu hiệu") +
-    line("not_enough_info", "Chưa đủ thông tin", ' <button type="button" class="link-button own-only" data-edit-hereditary>Trả lời câu hỏi</button>');
-  return section("hereditary", flagged.length ? "Bệnh di truyền nên hỏi bác sĩ" : "Bệnh di truyền",
-    (flagged.length ? '<div class="risk-grid">' + flagged.map(card).join("") + "</div>" : "") + '<div class="panel hereditary-rest">' + rest +
-    '<p class="note">Dựa trên tiền sử gia đình bạn khai báo. Chỉ xét nghiệm gen do bác sĩ chỉ định mới xác định được bệnh.</p></div>');
+  const rest = line("diagnosed", "Bạn khai báo đã được chẩn đoán") + line("not_seen", "Chưa ghi nhận trong tiền sử đã khai báo") +
+    line("not_enough_info", "Chưa rõ tiền sử gia đình", ' <button type="button" class="link-button own-only" data-edit-hereditary>Cập nhật thông tin</button>');
+  const note = '<p class="note genetics-method-note">Bốn mục dưới đây chỉ rà soát tiền sử gia đình để gợi ý trao đổi với bác sĩ. “Chưa ghi nhận” không loại trừ người mang gen hoặc bệnh; ứng dụng không đọc ADN.</p>';
+  return section("hereditary", "Bệnh di truyền được rà soát", note +
+    (flagged.length ? '<div class="risk-grid">' + flagged.map(card).join("") + "</div>" : "") + '<div class="panel hereditary-rest">' + rest + "</div>");
 }
 
 // Doctor's report: an A4 page built from the user's readings, saved as PDF through the print dialog.
@@ -965,21 +1159,32 @@ function renderReport() {
   const sex = { female: "Nữ", male: "Nam", other: "Không khai báo" }[p.sex] || "Không khai báo";
   const cell = (key, v) => v[key] == null ? "" : valueOf(key, v) + (glucoseWhen(key, v) ? " (" + glucoseWhen(key, v) + ")" : "");
   const mark = v => { const levels = METRICS.map(m => statusOf(m.key, v)[0]); return levels.includes("alert") ? "Nguy hiểm" : levels.includes("attention") ? "Cần chú ý" : ""; };
-  const family = MEMBERS.map(m => {
+  const extendedMembers = [...MEMBERS, ...(h.family_history.some(row => row.member_id === "maternal-uncle")
+    ? [{ id: "maternal-uncle", label: "Cậu (anh/em trai của mẹ)" }] : [])];
+  const family = extendedMembers.map(m => {
     const saved = h.family_history.find(row => row.member_id === m.id);
     const text = saved?.knowledge === "known" && saved.conditions?.length ? (saved.affected_count > 1 ? saved.affected_count + " người: " : "") + saved.conditions.map(conditionName).join(", ") : saved?.knowledge === "none" ? "Không có bệnh đã biết" : "Chưa rõ";
-    return "<tr><td>" + m.label + "</td><td>" + esc(text) + "</td></tr>";
+    const source = saved?.knowledge === "unknown" || !saved ? "Chưa rõ nguồn" : (FAMILY_HISTORY_SOURCE_LABEL[saved.source] || "Tôi tự khai");
+    return "<tr><td>" + m.label + "</td><td>" + esc(text) + "</td><td>" + (saved?.age_at_diagnosis ? esc(saved.age_at_diagnosis + " tuổi") : "") + "</td><td>" + esc(source) + "</td><td>" + esc(saved?.last_confirmed_on ? date(saved.last_confirmed_on, false) : "") + "</td></tr>";
   }).join("");
+  const hereditaryConcerns = (state.risk?.hereditary || []).filter(item => item.status === "ask_doctor");
+  const hereditaryTable = hereditaryConcerns.length ? '<table class="report-table"><thead><tr><th>Chủ đề</th><th>Lý do từ tiền sử đã khai</th><th>Gợi ý trao đổi</th></tr></thead><tbody>' + hereditaryConcerns.map(item =>
+    "<tr><td>" + esc(SCREENS[item.condition] || item.condition) + "</td><td>" + esc((item.reasons || []).join(" ")) + "</td><td>" + esc(item.advice || "Trao đổi với bác sĩ.") + "</td></tr>").join("") + "</tbody></table>" : "<p>Chưa có gợi ý trao đổi nào được ghi nhận từ thông tin hiện tại.</p>";
+  const geneticDocuments = state.viewing ? [] : state.medicalRecords.filter(record => record.analysis.document_type === "genetic_test_report");
+  const geneticResultRows = geneticDocuments.flatMap(record => (record.analysis.genetic_findings || []).map(finding =>
+    "<tr><td>" + esc(record.analysis.document_date ? date(record.analysis.document_date, false) : date(record.created_at, false)) + "</td><td>" + esc(finding.gene || "") + "</td><td>" + esc(finding.variant || "") + "</td><td>" + esc(finding.classification || "") + "</td></tr>"));
+  const geneticDocumentTable = geneticDocuments.length ? '<p>Kết quả dưới đây được chép từ giấy tờ người dùng đã xác nhận; GeneSense không diễn giải lại.</p>' +
+    (geneticResultRows.length ? '<table class="report-table"><thead><tr><th>Ngày</th><th>Gen</th><th>Biến thể ghi trên phiếu</th><th>Kết luận phòng xét nghiệm</th></tr></thead><tbody>' + geneticResultRows.join("") + "</tbody></table>" : "<p>Đã lưu giấy tờ di truyền nhưng chưa trích được mục biến thể có cấu trúc.</p>") : state.viewing ? "<p>Giấy tờ di truyền không được chia sẻ trong chế độ xem người thân.</p>" : "<p>Chưa lưu kết quả xét nghiệm di truyền.</p>";
   const notice = "Phiếu do người dùng tự ghi bằng ứng dụng GeneSense. Không phải kết quả khám bệnh, không có giá trị chẩn đoán.";
   // Medicines being taken now. Not shown while viewing a relative: their medicines are not shared yet, and state.medications holds the viewer's own.
   const medicines = state.medications.filter(m => medicineActive(m));
   const medicineRows = medicines.map(m => "<tr><td>" + esc(m.name + (m.strength ? " " + m.strength : "")) + "</td><td>" + esc(medicineWhen(m) + (medicineHow(m) ? ": " + medicineHow(m) : "")) + "</td><td>" + esc(medicineCourse(m)) + "</td></tr>").join("");
-  const numerals = ["I", "II", "III", "IV", "V", "VI"];
+  const numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"];
   let part = 0;
   const heading = text => "<h2>" + numerals[part++] + ". " + text + "</h2>";
   $("#report-sheet").innerHTML =
     '<header class="report-head"><div><strong>GeneSense</strong><br>Ứng dụng theo dõi sức khỏe tại nhà</div><div class="report-meta">Mã phiếu: ' + code + "<br>Ngày lập: " + esc(date(now.toISOString(), false)) + "</div></header>" +
-    '<h1 id="report-title">PHIẾU TỔNG HỢP CHỈ SỐ SỨC KHỎE TẠI NHÀ</h1><p class="report-period">Kỳ báo cáo: ' + days + " ngày, đến ngày " + esc(date(now.toISOString(), false)) + '</p><p class="report-notice">' + notice + "</p>" +
+    '<h1 id="report-title">' + (state.reportReturnView === 'genetics' ? 'PHIẾU TỔNG HỢP SỨC KHỎE VÀ DI TRUYỀN' : 'PHIẾU TỔNG HỢP CHỈ SỐ SỨC KHỎE TẠI NHÀ') + '</h1><p class="report-period">Số đo trong ' + days + ' ngày; tiền sử và giấy tờ đã lưu đến ' + esc(date(now.toISOString(), false)) + '</p><p class="report-notice">' + notice + "</p>" +
     (cut ? '<p class="report-notice">Phiếu chỉ gồm 100 lần đo gần nhất, từ ' + esc(date(oldest.toISOString())) + ". Các lần đo cũ hơn trong kỳ không có trong phiếu.</p>" : "") +
     heading("Thông tin người dùng") +
     '<table class="report-table report-info"><tbody><tr><th>Họ tên</th><td>' + esc(h.display_name) + "</td><th>Tuổi</th><td>" + p.age + "</td><th>Giới tính</th><td>" + sex + "</td></tr>" +
@@ -987,7 +1192,9 @@ function renderReport() {
     "<tr><th>Bệnh đã chẩn đoán</th><td colspan=\"5\">" + esc(p.known_conditions.map(conditionName).filter(Boolean).join(", ") || "Không khai báo") + "</td></tr>" +
     "<tr><th>Hút thuốc</th><td>" + (p.smoker ? "Có" : "Không") + "</td><th>Vận động</th><td colspan=\"3\">" + p.activity_minutes_week + " phút mỗi tuần</td></tr></tbody></table>" +
     heading("Tiền sử bệnh trong gia đình") +
-    '<table class="report-table"><thead><tr><th>Người thân</th><th>Bệnh đã biết</th></tr></thead><tbody>' + family + "</tbody></table>" +
+    '<table class="report-table"><thead><tr><th>Người thân</th><th>Bệnh đã biết</th><th>Tuổi chẩn đoán (nếu nhớ)</th><th>Nguồn thông tin</th><th>Ngày hỏi/đối chiếu</th></tr></thead><tbody>' + family + "</tbody></table>" +
+    heading("Thông tin di truyền để trao đổi") + '<p class="report-notice">Các gợi ý này chỉ dựa trên tiền sử gia đình đã khai, không phải chẩn đoán.</p>' + hereditaryTable + "<h3>Kết quả xét nghiệm di truyền đã lưu</h3>" + geneticDocumentTable +
+    '<h3>Câu hỏi chuẩn bị cho buổi tư vấn</h3><ol class="report-questions">' + geneticConsultationQuestions().map(question => '<li>' + esc(question) + '</li>').join('') + '</ol>' +
     (state.viewing ? "" : heading("Thuốc đang dùng") + (medicines.length ? '<table class="report-table"><thead><tr><th>Tên thuốc</th><th>Cách dùng</th><th>Thời gian</th></tr></thead><tbody>' + medicineRows + "</tbody></table>" : "<p>Không ghi thuốc đang dùng.</p>")) +
     heading("Tổng hợp trong kỳ") +
     (rows.length ? '<table class="report-table report-num"><thead><tr><th>Chỉ số</th><th>Đơn vị</th><th>Số lần đo</th><th>Trung bình</th><th>Thấp nhất</th><th>Cao nhất</th><th>Số lần ngoài ngưỡng</th></tr></thead><tbody>' + reportSummary(rows) + "</tbody></table>" : "<p>Không có số đo trong kỳ này.</p>") +
@@ -1008,7 +1215,10 @@ function renderReport() {
       series: spec.series.map(([key, label], index) => ({ label, color: "#000", dash: index ? "6 4" : "", values: points.map(row => chartValue(key, row.vitals[key])) })) });
   }
 }
-function openReport() { screen("report"); document.title = "Phiếu tổng hợp - GeneSense"; renderReport(); history.pushState({ layer: true }, ""); reportLayer = true; }
+function openReport() {
+  state.reportReturnView = ["history", "genetics"].includes(state.view) ? state.view : "history";
+  screen("report"); document.title = "Phiếu tổng hợp - GeneSense"; renderReport(); history.pushState({ layer: true }, ""); reportLayer = true;
+}
 
 // Family sharing. While viewing a relative, the same screens render that person's data read-only:
 // state is swapped, writes are hidden (.own-only) and guarded, and reads go through the care endpoints.
@@ -1092,6 +1302,60 @@ async function removeCareLink(id, kind) {
   try { await api.careRemove(id); await refreshCare(); toast(kind === "caregiver" ? "Đã thu hồi quyền xem." : "Đã ngừng theo dõi."); }
   catch (error) { toast(error.message, "error"); }
 }
+async function createFamilyInvite() {
+  const relation = $("#family-relation-select").value;
+  try {
+    state.familyInviteCode = await api.familyInvite({ relative_relation: relation });
+    renderFamilyLinks();
+    toast("Đã tạo mã mời dùng một lần.");
+  } catch (error) { toast(error.message, "error"); }
+}
+async function previewFamilyInvite(event) {
+  event.preventDefault();
+  errorAt("#family-invite-error");
+  const code = $("#family-invite-code").value.trim();
+  try {
+    state.familyInvitePreview = { ...(await api.familyInvitePreview(code)), code };
+    renderFamilyLinks();
+    $("#family-join-panel")?.setAttribute("open", "");
+    $("#family-confirm-relationship")?.focus();
+  } catch (error) { errorAt("#family-invite-error", error.message); }
+}
+async function acceptFamilyInvite() {
+  if (!state.familyInvitePreview || !$("#family-confirm-relationship").checked) return;
+  const invite = state.familyInvitePreview;
+  const button = $("#family-invite-accept");
+  button.disabled = true;
+  try {
+    const linked = await api.familyAccept(invite.code, true);
+    state.familyInvitePreview = null;
+    await refreshFamilyLinks();
+    toast("Đã xác nhận liên kết với " + linked.display_name + ".");
+  } catch (error) {
+    button.disabled = false;
+    errorAt("#family-invite-error", error.message);
+  }
+}
+async function setFamilySharing(toggle) {
+  const id = toggle.dataset.familyShare, previous = !toggle.checked;
+  toggle.disabled = true;
+  try {
+    await api.familySharing(id, toggle.checked);
+    await refreshFamilyLinks();
+    toast(toggle.checked ? "Đã bật chia sẻ bệnh đã khai báo với người thân này." : "Đã tắt chia sẻ.");
+  } catch (error) {
+    toggle.checked = previous;
+    toast(error.message, "error");
+  } finally { toggle.disabled = false; }
+}
+async function removeFamilyLink(id) {
+  if (!await confirmAction("Ngắt liên kết gia đình?", "Cả hai tài khoản sẽ không còn xem được thông tin đang chia sẻ với nhau.", "Ngắt liên kết")) return;
+  try {
+    await api.familyRemove(id);
+    await refreshFamilyLinks();
+    toast("Đã ngắt liên kết gia đình.");
+  } catch (error) { toast(error.message, "error"); }
+}
 async function viewPatient(patientId) {
   const patient = state.care.patients.find(p => p.patient_id === patientId);
   if (!patient || state.viewing) return;
@@ -1124,25 +1388,44 @@ async function exitViewing() {
   offerDeviceImport();
 }
 
-function analysisMarkup(analysis) {
+function analysisMarkup(analysis, recordId = "") {
   const metricRows = analysis.metrics?.length ? '<div class="extracted-metrics">' + analysis.metrics.map(metric => {
     const badge = metric.flag === "normal" ? "safe" : metric.flag === "unknown" ? "neutral" : "attention";
     return '<div><span><strong>' + esc(metric.name) + '</strong><small>' + esc(metric.reference_range ? "Tham chiếu: " + metric.reference_range : "Không có khoảng tham chiếu") + '</small></span><span class="metric-value">' + esc(metric.value) + " " + esc(metric.unit) + '</span><span class="tag ' + badge + '">' + esc(FLAG_NAMES[metric.flag] || "Chưa rõ") + "</span></div>";
   }).join("") + "</div>" : "";
   const list = (title, values, tone = "") => values?.length ? '<section class="extracted-list ' + tone + '"><strong>' + title + '</strong><ul>' + values.map(value => "<li>" + esc(value) + "</li>").join("") + "</ul></section>" : "";
   const medications = analysis.medications?.length ? '<section class="extracted-list"><strong>Thuốc được ghi trên tài liệu</strong><ul>' + analysis.medications.map(item => "<li>" + esc(item.name) + (item.dose ? ", " + esc(item.dose) : "") + (item.frequency ? ", " + esc(item.frequency) : "") + "</li>").join("") + "</ul></section>" : "";
-  return '<div class="analysis-summary"><div class="record-meta"><span>' + esc(DOCUMENT_TYPES[analysis.document_type] || "Tài liệu sức khỏe") + '</span><span>' + esc(analysis.document_date ? date(analysis.document_date, false) : "Không rõ ngày") + '</span><span>' + esc(analysis.provider || "Không rõ cơ sở") + '</span></div><h3>' + esc(analysis.title) + '</h3><p>' + esc(analysis.summary) + "</p></div>" + metricRows + list("Thông tin bệnh được ghi", analysis.conditions) + medications + list("Đề xuất được ghi trên tài liệu", analysis.recommendations) + list("Điểm cần kiểm tra lại", analysis.warnings, "warning") + '<p class="analysis-disclaimer">' + esc(analysis.disclaimer) + "</p>";
+  const findings = (analysis.genetic_findings || []).map((finding, index) => {
+    const values = [["Gen", finding.gene], ["Biến thể ghi trên phiếu", finding.variant], ["Transcript", finding.transcript],
+      ["Hệ gen tham chiếu", finding.genome_build], ["HGVS hệ gen (g.)", finding.hgvs_genomic],
+      ["HGVS mã hóa (c.)", finding.hgvs_coding], ["HGVS protein (p.)", finding.hgvs_protein], ["dbSNP (rsID)", finding.rsid],
+      ["Kết luận của phòng xét nghiệm", finding.classification],
+      ["Kiểu gen ghi trên phiếu", finding.zygosity], ["Bệnh liên quan (nếu có)", finding.condition]]
+      .filter(([, value]) => value).map(([label, value]) => "<div><dt>" + label + "</dt><dd>" + esc(value) + "</dd></div>").join("");
+    const preferredVariant = finding.rsid || finding.hgvs_coding || finding.hgvs_genomic || finding.variant || finding.hgvs_protein;
+    const query = [finding.gene, finding.hgvs_coding && !finding.rsid ? finding.transcript : "", preferredVariant].filter(Boolean).join(" ");
+    const sources = query ? '<div class="genetics-sources"><button type="button" class="link-button" data-genetics-search="' + esc(query) + '">Tìm trong ClinVar</button>' +
+      '<a href="https://dataexchange.clinicalgenome.org/clinvar-gkm/profiles/review-status/" target="_blank" rel="noopener noreferrer">Cách đọc mức rà soát ClinVar</a>' +
+      (finding.gene ? '<a href="https://search.clinicalgenome.org/kb/gene-validity" target="_blank" rel="noopener noreferrer">Tra cứu đánh giá gen–bệnh tại ClinGen</a>' : "") + "</div>" : "";
+    const reviewSource = { clinvar: "ClinVar", clingen: "ClinGen", care_team: "Bác sĩ/nhóm chăm sóc" }[finding.evidence_review_source];
+    const review = recordId && query ? '<div class="evidence-review"><p class="note">' + (finding.evidence_review_on
+      ? "Bạn đã ghi nhận tự đối chiếu với " + esc(reviewSource || "nguồn tham khảo") + " ngày " + esc(date(finding.evidence_review_on, false)) + ". Đây không phải xác nhận của GeneSense."
+      : "Chưa ghi nhận lần tự đối chiếu nào. GeneSense không tự đồng bộ dữ liệu phân loại.") + '</p><label>Nguồn đã xem<select data-evidence-source="' + esc(recordId) + ':' + index + '"><option value="clinvar"' + (finding.evidence_review_source === "clinvar" ? " selected" : "") + '>ClinVar</option><option value="clingen"' + (finding.evidence_review_source === "clingen" ? " selected" : "") + '>ClinGen</option><option value="care_team"' + (finding.evidence_review_source === "care_team" ? " selected" : "") + '>Bác sĩ/nhóm chăm sóc</option></select></label><button type="button" class="btn outline" data-mark-evidence="' + esc(recordId) + ':' + index + '">' + (finding.evidence_review_on ? "Cập nhật lần đối chiếu" : "Ghi nhận đã đối chiếu") + '</button></div>' : '';
+    return '<article class="genetic-finding"><dl>' + values + "</dl>" + (finding.source_excerpt ? '<blockquote><strong>Trích trên phiếu:</strong> ' + esc(finding.source_excerpt) + "</blockquote>" : "") + sources + (query ? '<p class="note external-genetics-note">Mở ClinVar sẽ gửi tên gen và một mã biến thể được chọn đến NCBI. Chỉ mở nếu bạn đồng ý.</p>' : "") + review + "</article>";
+  }).join("");
+  const geneticBlock = findings ? '<section class="extracted-list genetic-result-list"><strong>Kết quả di truyền được ghi trên phiếu</strong><p class="note">' + (analysis.source === 'manual' ? 'Nội dung bạn nhập tay từ phiếu gốc.' : 'Nội dung AI đã trích và bạn xác nhận.') + ' GeneSense chưa đối chiếu hay diễn giải; hãy so từng mục với bản gốc.</p>' + findings + '<p class="note">GeneSense chưa tự đồng bộ phân loại, số sao rà soát, ngày cập nhật hay xung đột từ ClinVar/ClinGen. Khi tra cứu, hãy kiểm tra các chi tiết đó và hỏi chuyên gia; đường dẫn không thay thế tư vấn chuyên môn.</p></section>' : "";
+  return '<div class="analysis-summary"><div class="record-meta"><span>' + esc(DOCUMENT_TYPES[analysis.document_type] || "Tài liệu sức khỏe") + '</span><span>' + esc(analysis.document_date ? date(analysis.document_date, false) : "Không rõ ngày") + '</span><span>' + esc(analysis.provider || "Không rõ cơ sở") + '</span></div><h3>' + esc(analysis.title) + '</h3><p>' + esc(analysis.summary) + "</p></div>" + geneticBlock + metricRows + list("Thông tin bệnh được ghi", analysis.conditions) + medications + list("Đề xuất được ghi trên tài liệu", analysis.recommendations) + list("Điểm cần kiểm tra lại", analysis.warnings, "warning") + '<p class="analysis-disclaimer">' + esc(analysis.disclaimer) + "</p>";
 }
 
 function renderMedicalRecords() {
   if (!state.medicalRecords.length) {
-    $("#medical-record-list").innerHTML = '<article class="panel empty-state"><h2>Chưa có giấy tờ nào</h2><p class="note">Giấy tờ đã lưu sẽ hiện ở đây.</p></article>';
+    $("#medical-record-list").innerHTML = '<article class="panel empty-state record-empty-state"><span class="record-empty-icon" aria-hidden="true">' + icon("document") + '</span><div><h2>Chưa lưu giấy tờ nào</h2><p class="note">Đơn thuốc, giấy khám và kết quả đã lưu sẽ hiện ở đây.</p></div></article>';
     return;
   }
   $("#medical-record-list").innerHTML = state.medicalRecords.map(record => {
     const a = record.analysis;
     const notable = (a.metrics || []).filter(metric => !["normal", "unknown"].includes(metric.flag)).length;
-    return '<article class="panel medical-record"><div class="record-meta"><span>' + esc(DOCUMENT_TYPES[a.document_type] || "Tài liệu sức khỏe") + "</span><span>" + esc(a.document_date ? date(a.document_date, false) : date(record.created_at, false)) + "</span>" + (notable ? '<span class="tag attention">' + notable + " mục cần xem lại</span>" : "") + "</div><h2>" + esc(a.title) + "</h2><p>" + esc(a.summary) + '</p><details class="record-details"><summary>Xem nội dung đã lưu</summary>' + analysisMarkup(a) + '</details><div class="record-actions"><button class="link-button hidden" data-view-scan="' + esc(record.id) + '">Xem ảnh gốc</button><button class="delete-record" data-delete-record="' + esc(record.id) + '">Xóa</button></div></article>';
+    return '<article class="panel medical-record" data-medical-record-id="' + esc(record.id) + '" tabindex="-1"><div class="record-meta"><span>' + esc(DOCUMENT_TYPES[a.document_type] || "Tài liệu sức khỏe") + "</span><span>" + esc(a.document_date ? date(a.document_date, false) : date(record.created_at, false)) + "</span>" + (a.source === "manual" ? '<span class="tag info">Nhập tay</span>' : "") + (notable ? '<span class="tag attention">' + notable + " mục cần xem lại</span>" : "") + "</div><h2>" + esc(a.title) + "</h2><p>" + esc(a.summary) + '</p><details class="record-details"><summary>Xem nội dung đã lưu</summary>' + analysisMarkup(a, record.id) + '</details><div class="record-actions"><button class="link-button hidden" data-view-scan="' + esc(record.id) + '">Xem ảnh gốc</button><button class="delete-record" data-delete-record="' + esc(record.id) + '">Xóa</button></div></article>';
   }).join("");
   // The button appears only where this device still holds the scan.
   $$("[data-view-scan]").forEach(async button => { if (await scanRequest("readonly", store => store.getKey(button.dataset.viewScan))) button.classList.remove("hidden"); });
@@ -1198,21 +1481,37 @@ const APPLY_VITALS = [["systolic", "Huyết áp tâm thu (mmHg)", 50, 260], ["di
 // The part of a scanned document that can go into the profile. Only what is new is offered.
 function applyMarkup(analysis) {
   // Blood pressure is saved as a pair, so both fields show even when the AI read only one of the two numbers.
-  const vitals = analysis.vitals || {}, pressure = vitals.systolic != null || vitals.diastolic != null;
+  const geneticReport = analysis.document_type === "genetic_test_report";
+  const vitals = geneticReport ? {} : analysis.vitals || {}, pressure = vitals.systolic != null || vitals.diastolic != null;
   const found = APPLY_VITALS.filter(([key]) => vitals[key] != null || (pressure && ["systolic", "diastolic"].includes(key)));
   const name = key => CONDITIONS.find(([id]) => id === key)?.[1];
-  const own = (analysis.own_conditions || []).filter(key => !state.health.profile.known_conditions.includes(key));
-  const family = (analysis.family_conditions || []).filter(item => !state.health.family_history.find(row => row.member_id === item.member)?.conditions.includes(item.condition));
-  const medicines = analysis.medications || [];
-  if (!found.length && !own.length && !family.length && !medicines.length) return '<p class="note">Không thấy chỉ số huyết áp, nhịp tim, đường huyết, thuốc, bệnh đã chẩn đoán hay tiền sử gia đình mới để đưa vào hồ sơ. Nội dung giấy tờ vẫn được lưu.</p>';
+  const own = geneticReport ? [] : (analysis.own_conditions || []).filter(key => !state.health.profile.known_conditions.includes(key));
+  const family = geneticReport ? [] : (analysis.family_conditions || []).filter(item => !state.health.family_history.find(row => row.member_id === item.member)?.conditions.includes(item.condition));
+  const medicines = geneticReport ? [] : analysis.medications || [];
+  const geneticFindings = analysis.genetic_findings || [];
+  if (!found.length && !own.length && !family.length && !medicines.length && !geneticFindings.length) return '<p class="note">Không thấy chỉ số, thuốc, bệnh mới hay kết quả di truyền rõ ràng để đưa vào hồ sơ. Nội dung giấy tờ vẫn được lưu.</p>';
   const check = (attribute, label) => '<label class="check-label"><input type="checkbox" ' + attribute + ' checked><span>' + label + "</span></label>";
+  const geneticField = (index, finding, key, label, multiline = false) => '<label>' + label + (multiline
+    ? '<textarea rows="2" maxlength="300" data-genetic-index="' + index + '" data-genetic-field="' + key + '">' + esc(finding[key]) + "</textarea>"
+    : '<input maxlength="' + ({ gene: 60, variant: 240, transcript: 100, genome_build: 40, hgvs_genomic: 180, hgvs_coding: 180,
+      hgvs_protein: 180, rsid: 40, zygosity: 100, classification: 120, condition: 200 }[key]) + '" data-genetic-index="' + index + '" data-genetic-field="' + key + '" value="' + esc(finding[key]) + '">') + "</label>";
   return '<h3>Đưa vào hồ sơ</h3>' +
     (found.length ? '<fieldset class="apply-group"><legend>Chỉ số đo</legend>' + check('id="apply-vitals"', "Thêm vào Lịch sử đo với nguồn “Từ giấy tờ”<small>Số liệu cũ, không đổi tình trạng Hôm nay.</small>") +
       '<div class="field-grid">' + found.map(([key, label, min, max]) => "<label>" + label + '<input type="number" inputmode="decimal" step=".1" min="' + min + '" max="' + max + '" data-apply-vital="' + key + '" value="' + esc(vitals[key] == null ? "" : Math.round(vitals[key] * 10) / 10) + '"></label>').join("") +
       '<label>Ngày ghi trên giấy tờ<input type="date" id="apply-date" required min="1950-01-01" max="' + new Date().toLocaleDateString("sv") + '" value="' + esc(analysis.document_date || "") + '"></label></div></fieldset>' : "") +
     (own.length ? '<fieldset class="apply-group"><legend>Bệnh đã được chẩn đoán</legend>' + own.map(key => check('data-apply-own="' + esc(key) + '"', esc(name(key)))).join("") + "</fieldset>" : "") +
     (family.length ? '<fieldset class="apply-group"><legend>Tiền sử gia đình</legend>' + family.map(item => check('data-apply-family="' + esc(item.member + "|" + item.condition) + '"', esc(MEMBERS.find(m => m.id === item.member).label + ": " + name(item.condition)))).join("") + "</fieldset>" : "") +
-    (medicines.length ? '<fieldset class="apply-group"><legend>Thuốc trong đơn</legend><p class="note">So từng thuốc với đơn giấy.</p>' + medicines.map(applyMedicineMarkup).join("") + "</fieldset>" : "");
+    (medicines.length ? '<fieldset class="apply-group"><legend>Thuốc trong đơn</legend><p class="note">So từng thuốc với đơn giấy.</p>' + medicines.map(applyMedicineMarkup).join("") + "</fieldset>" : "") +
+    (geneticFindings.length ? '<fieldset class="apply-group genetic-review"><legend>Đối chiếu kết quả di truyền</legend><p class="note">Các trường này được chép từ phiếu. Bạn có thể sửa theo bản gốc; GeneSense không phân loại biến thể.</p>' + geneticFindings.map((finding, index) =>
+      '<div class="genetic-review-card"><h4>Kết quả ' + (index + 1) + '</h4><div class="field-grid">' +
+      geneticField(index, finding, "gene", "Gen") + geneticField(index, finding, "variant", "Biến thể ghi trên phiếu") +
+      geneticField(index, finding, "classification", "Kết luận của phòng xét nghiệm") + geneticField(index, finding, "zygosity", "Kiểu gen ghi trên phiếu") +
+      geneticField(index, finding, "condition", "Bệnh liên quan (nếu có)") + geneticField(index, finding, "source_excerpt", "Trích đoạn để đối chiếu", true) +
+      '</div><details class="genetic-notation-details"><summary>Mã định danh trên phiếu (nếu có)</summary><div class="field-grid">' +
+      geneticField(index, finding, "transcript", "Transcript / mã phiên bản") + geneticField(index, finding, "genome_build", "Hệ gen tham chiếu") +
+      geneticField(index, finding, "hgvs_genomic", "HGVS hệ gen (g.)") + geneticField(index, finding, "hgvs_coding", "HGVS mã hóa (c.)") +
+      geneticField(index, finding, "hgvs_protein", "HGVS protein (p.)") + geneticField(index, finding, "rsid", "dbSNP (rsID)") +
+      "</div></details></div>").join("") + "</fieldset>" : "");
 }
 // One card per medicine read from a prescription. A name the AI was not sure of starts unticked, so it cannot be saved unseen.
 function applyMedicineMarkup(m) {
@@ -1248,12 +1547,49 @@ const medicineActive = (m, day = localDay()) => m.start_date <= day && (!m.days 
 const medicineHow = m => [m.amount, MEALS[m.meal]].filter(Boolean).join(", ");
 const medicineWhen = m => SLOTS.filter(([key]) => m[key]).map(([, label]) => label).join(", ") || "Khi cần";
 const medicineCourse = m => "Từ " + date(m.start_date + "T12:00:00", false) + (m.days ? ", " + m.days + " ngày" : ", uống lâu dài");
-function renderMedicineLink() {
-  const count = state.viewing ? 0 : state.medications.filter(m => medicineActive(m)).length;
-  const link = $("#today-medicines");
-  // The emergency panel stays the only call to action while it shows.
-  link.classList.toggle("hidden", !count || (state.result && isEmergency(state.result)));
-  link.textContent = "Hôm nay có " + count + " loại thuốc. Xem lịch uống thuốc";
+function renderTodayMedicineSummary() {
+  const section = $("#today-medicine-section"), summary = $("#today-medicine-summary");
+  const show = Boolean(state.user && !state.viewing && !(state.result && isEmergency(state.result)));
+  section.classList.toggle("hidden", !show);
+  if (!show) { summary.innerHTML = ""; return; }
+
+  const active = state.medications.filter(m => medicineActive(m));
+  if (!active.length) {
+    summary.innerHTML = '<div class="today-medicine-empty"><span class="today-medicine-empty-icon" aria-hidden="true">' + icon("pill") + '</span><div><strong>Chưa có thuốc đang dùng hôm nay</strong><p>Thêm thuốc theo đơn bác sĩ để xem nhắc nhở ngay tại đây.</p></div><button class="btn primary" data-add-medicine><span data-icon="plus"></span>Thêm thuốc</button></div>';
+    hydrateIcons(summary);
+    return;
+  }
+
+  const taken = new Set((state.medicationIntakes || []).map(row => row.medication_id + ":" + row.slot));
+  const groups = SLOTS.map(([slot, label]) => {
+    const medicines = active.filter(m => m[slot]);
+    const done = medicines.filter(m => taken.has(m.id + ":" + slot)).length;
+    return { slot, label, medicines, done };
+  }).filter(group => group.medicines.length);
+  const doseCount = groups.reduce((sum, group) => sum + group.medicines.length, 0);
+  const doneCount = groups.reduce((sum, group) => sum + group.done, 0);
+  const current = currentSlot();
+  const openGroup = groups.find(group => group.slot === current && group.done < group.medicines.length)
+    || groups.find(group => group.done < group.medicines.length)
+    || groups.find(group => group.slot === current)
+    || groups[0];
+  const progressMarkup = !doseCount ? "" : state.medicationIntakes === null
+    ? '<p class="today-med-loading" role="status">Đang tải trạng thái các liều…</p>'
+    : '<div class="today-medicine-progress-row"><span>' + doneCount + '/' + doseCount + ' liều đã ghi nhận</span><progress class="today-medicine-progress" aria-label="Tiến độ ghi nhận thuốc hôm nay" max="' + doseCount + '" value="' + doneCount + '"></progress></div>';
+  const groupMarkup = groups.map(group => {
+    const completed = group.done === group.medicines.length;
+    const status = state.medicationIntakes === null ? "Đang tải trạng thái" : completed ? "Đã ghi nhận đủ" : group.done + "/" + group.medicines.length + " đã uống";
+    const rows = group.medicines.map(m => {
+      const checked = taken.has(m.id + ":" + group.slot);
+      const label = "Đã uống " + m.name + " buổi " + group.label.toLowerCase();
+      return '<li class="today-med-row"><div><strong>' + esc(m.name + (m.strength ? " " + m.strength : "")) + '</strong>' + (medicineHow(m) ? '<span>' + esc(medicineHow(m)) + '</span>' : "") + '</div><label class="today-med-check"><input type="checkbox" data-medication-intake="' + esc(m.id) + '" data-intake-slot="' + group.slot + '" aria-label="' + esc(label) + '"' + (checked ? " checked" : "") + (state.medicationIntakes === null ? " disabled" : "") + '><span>' + (checked ? "Đã uống" : "Đánh dấu đã uống") + '</span></label></li>';
+    }).join("");
+    return '<details class="today-med-group"' + (group === openGroup ? " open" : "") + '><summary><span class="today-med-period-name">' + esc(group.label) + (group.slot === current ? ' <span class="today-med-now">Buổi hiện tại</span>' : "") + '</span><span class="today-med-period-status">' + status + '</span><span class="today-med-chevron" data-icon="chevron" aria-hidden="true"></span></summary><ul>' + rows + '</ul></details>';
+  }).join("");
+  const asNeededCount = active.filter(m => !SLOTS.some(([slot]) => m[slot])).length;
+  const asNeeded = asNeededCount ? '<p class="today-med-prn"><span data-icon="info" aria-hidden="true"></span><span><strong>' + asNeededCount + ' thuốc dùng khi cần.</strong> Làm theo hướng dẫn trong đơn.</span></p>' : "";
+  summary.innerHTML = progressMarkup + (groupMarkup ? '<div class="today-med-groups">' + groupMarkup + '</div>' : '<p class="today-med-prn">Hôm nay chưa có liều theo buổi.</p>') + asNeeded + '<p class="today-med-note">Đánh dấu sau khi uống. Lịch hiển thị trong ứng dụng; chưa gửi thông báo ngoài ứng dụng.</p>';
+  hydrateIcons(summary);
 }
 // The "Đã uống" ticks belong to one calendar day; after midnight they must be fetched again.
 const refreshIfNewDay = () => { if (state.intakesDay && state.intakesDay !== localDay()) { state.medicationIntakes = null; state.intakesDay = null; void refreshMedications(); } };
@@ -1268,6 +1604,17 @@ function renderRecordsTab() {
   $("#documents-panel").classList.toggle("hidden", tab !== "documents");
   renderMedicines();
 }
+function openGeneticRecord(id) {
+  if (state.viewing) return;
+  state.recordsTab = "documents";
+  navigate("records");
+  const article = [...$$('[data-medical-record-id]')].find(item => item.dataset.medicalRecordId === id);
+  if (!article) { toast("Không tìm thấy phiếu di truyền đã lưu.", "error"); return; }
+  article.querySelector("details")?.setAttribute("open", "");
+  article.classList.add("genetics-record-focus");
+  article.focus({ preventScroll: true });
+  article.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+}
 function renderMedicines() {
   const active = state.medications.filter(m => medicineActive(m));
   const now = currentSlot();
@@ -1275,17 +1622,17 @@ function renderMedicines() {
   const taken = new Set((state.medicationIntakes || []).map(row => row.medication_id + ":" + row.slot));
   const item = (m, slot = null) => {
     const checked = slot && taken.has(m.id + ":" + slot);
-    const intake = slot ? '<label class="medicine-intake"><input type="checkbox" data-medication-intake="' + esc(m.id) + '" data-intake-slot="' + slot + '" aria-label="' + esc("Đã uống " + m.name + " buổi " + SLOTS.find(([key]) => key === slot)[1].toLowerCase()) + '"' + (checked ? " checked" : "") + (state.medicationIntakes === null ? " disabled" : "") + '><span>' + (checked ? "✓ Đã uống" : "Bấm khi đã uống") + "</span></label>" : "";
+    const intake = slot ? '<label class="medicine-intake"><input type="checkbox" data-medication-intake="' + esc(m.id) + '" data-intake-slot="' + slot + '" aria-label="' + esc("Đã uống " + m.name + " buổi " + SLOTS.find(([key]) => key === slot)[1].toLowerCase()) + '"' + (checked ? " checked" : "") + (state.medicationIntakes === null ? " disabled" : "") + '><span>' + (checked ? "✓ Đã uống" : "Đánh dấu đã uống") + "</span></label>" : "";
     return '<li class="medicine-schedule-row"><div><strong>' + title(m) + "</strong>" + (medicineHow(m) ? "<span>" + esc(medicineHow(m)) + "</span>" : "") + (m.note ? '<span class="note">' + esc(m.note) + "</span>" : "") + "</div>" + intake + "</li>";
   };
   const block = (label, rows, current, slot = null) => rows.length ? '<article class="panel slot"><h3>' + label + (current ? ' <span class="tag">Bây giờ</span>' : "") + "</h3><ul>" + rows.map(m => item(m, slot)).join("") + "</ul></article>" : "";
-  const blocks = SLOTS.map(([key, label]) => block(label, active.filter(m => m[key]), key === now, key)).join("") + block("Khi cần", active.filter(m => !SLOTS.some(([key]) => m[key])));
-  $("#medicine-today").innerHTML = blocks ? '<div class="slot-grid">' + blocks + '</div><p class="note">Nếu khác đơn giấy, hãy làm theo đơn và lời bác sĩ.</p>'
-    : '<article class="panel empty-state"><h3>Hôm nay không có thuốc trong lịch</h3><p class="note">Chụp đơn thuốc hoặc bấm Thêm thuốc.</p></article>';
+  const blocks = SLOTS.map(([key, label]) => block(label, active.filter(m => m[key]), key === now, key)).join("") + block("Uống khi cần", active.filter(m => !SLOTS.some(([key]) => m[key])));
+  $("#medicine-today").innerHTML = blocks ? '<div class="slot-grid">' + blocks + '</div><p class="note">Chỉ đánh dấu sau khi đã uống thuốc. Nếu có điều gì khác với đơn, hãy làm theo đơn và hướng dẫn của bác sĩ. Ứng dụng không nhắc giờ uống.</p>'
+    : '<article class="panel empty-state medicine-empty-state"><span class="record-empty-icon" aria-hidden="true">' + icon("pill") + '</span><div><h3>Chưa có thuốc trong lịch hôm nay</h3><p class="note">Thêm thuốc theo đơn bác sĩ để xem lịch uống tại đây.</p></div></article>';
   if (active.some(m => SLOTS.some(([key]) => m[key])) && state.medicationIntakes === null) {
-    $("#medicine-today").insertAdjacentHTML("beforeend", '<p class="note" role="status">Chưa tải được trạng thái uống thuốc. Kết nối mạng rồi thử làm mới.</p>');
+    $("#medicine-today").insertAdjacentHTML("beforeend", '<p class="note" role="status">Chưa tải được trạng thái uống thuốc. Kiểm tra kết nối mạng rồi thử lại.</p>');
   } else if (blocks) {
-    $("#medicine-today").insertAdjacentHTML("beforeend", '<p class="note">Chỉ ghi nhận sau khi bạn đã uống; GeneSense không nhắc giờ hay thay đổi hướng dẫn trên đơn.</p>');
+    $("#medicine-today").insertAdjacentHTML("beforeend", '<p class="note">Chỉ đánh dấu sau khi đã uống. Lịch hiển thị trong ứng dụng; chưa gửi thông báo ngoài ứng dụng. Hãy làm theo đơn và hướng dẫn của bác sĩ.</p>');
   }
   const day = localDay();
   const tag = m => m.start_date > day ? '<span class="tag">Chưa bắt đầu</span>' : medicineActive(m, day) ? "" : '<span class="tag">Đã hết đợt</span>';
@@ -1294,7 +1641,7 @@ function renderMedicines() {
   $("#medicine-list").innerHTML = '<ul class="panel medicine-rows">' + state.medications.map(m =>
     "<li><div><strong>" + title(m) + "</strong><span>" + esc(medicineWhen(m) + (medicineHow(m) ? ": " + medicineHow(m) : "")) + '</span><span class="note">' + esc(medicineCourse(m)) + " " + tag(m) + "</span></div>" +
     '<button class="btn outline" data-edit-medicine="' + esc(m.id) + '">Sửa</button></li>').join("") + "</ul>";
-  renderMedicineLink();
+  renderTodayMedicineSummary();
 }
 async function refreshMedications() {
   const epoch = state.authEpoch;
@@ -1420,6 +1767,7 @@ async function applyDocument(vitals) {
       let row = health.family_history.find(item => item.member_id === id);
       if (!row) health.family_history.push(row = { member_id: id, relation: member.relation, side: member.side, conditions: [] });
       row.knowledge = "known"; row.conditions = [...new Set([...row.conditions, condition])];
+      row.source = "document_checked"; row.last_confirmed_on = localDay();
     }
     const data = await api.saveProfile(health);
     state.health = data.health; state.user = data.user;
@@ -1452,7 +1800,7 @@ async function refreshMedicalRecords() {
     renderMedicalRecords();
   } catch (error) {
     if (epoch !== state.authEpoch) return;
-    $("#medical-record-list").innerHTML = '<article class="panel empty-state"><h2>Chưa tải được danh sách giấy tờ</h2><p>' + esc(error.message) + "</p></article>";
+    $("#medical-record-list").innerHTML = '<article class="panel empty-state"><h2>Chưa tải được giấy tờ</h2><p class="note">Kiểm tra kết nối mạng rồi thử lại.</p></article>';
   }
 }
 
@@ -1486,6 +1834,74 @@ function openMedicalUpload() {
   if (state.viewing) return;
   resetMedicalUpload();
   openDialog($("#medical-upload-dialog"));
+}
+
+const MANUAL_GENETIC_KEYS = ["gene", "variant", "classification", "condition", "transcript", "genome_build", "hgvs_genomic", "hgvs_coding", "hgvs_protein", "rsid", "zygosity", "source_excerpt"];
+function manualFindingMarkup(number) {
+  return '<fieldset class="manual-genetic-finding" data-manual-finding><legend>Gen/biến thể ' + number + '</legend>' +
+    '<div class="field-grid"><label>Tên gen ghi trên phiếu<input name="gene" maxlength="60" autocomplete="off" placeholder="Ví dụ: BRCA1"></label><label>Biến thể ghi trên phiếu<input name="variant" maxlength="240" autocomplete="off" placeholder="Chép nguyên văn nếu có"></label></div>' +
+    '<div class="field-grid"><label>Kết luận phòng xét nghiệm<input name="classification" maxlength="120" autocomplete="off" placeholder="Không tự phân loại"></label><label>Bệnh liên quan ghi trên phiếu<input name="condition" maxlength="200" autocomplete="off"></label></div>' +
+    '<details class="record-details manual-genetic-more"><summary>Mã định danh và thông tin khác (nếu có)</summary><div class="field-grid">' +
+      '<label>Transcript<input name="transcript" maxlength="100" autocomplete="off"></label><label>Hệ gen tham chiếu<input name="genome_build" maxlength="40" autocomplete="off"></label>' +
+      '<label>HGVS hệ gen (g.)<input name="hgvs_genomic" maxlength="180" autocomplete="off"></label><label>HGVS mã hóa (c.)<input name="hgvs_coding" maxlength="180" autocomplete="off"></label>' +
+      '<label>HGVS protein (p.)<input name="hgvs_protein" maxlength="180" autocomplete="off"></label><label>dbSNP (rsID)<input name="rsid" maxlength="40" autocomplete="off"></label>' +
+      '<label>Kiểu gen ghi trên phiếu<input name="zygosity" maxlength="100" autocomplete="off"></label><label>Trích đoạn trên phiếu<input name="source_excerpt" maxlength="300" autocomplete="off"></label>' +
+    '</div></details><button type="button" class="link-button manual-genetic-remove" data-remove-manual-finding>Xóa mục này</button></fieldset>';
+}
+function updateManualFindingControls() {
+  const rows = $$("[data-manual-finding]");
+  rows.forEach((row, index) => { row.querySelector("legend").textContent = "Gen/biến thể " + (index + 1); row.querySelector("[data-remove-manual-finding]").classList.toggle("hidden", rows.length === 1); });
+  $("#manual-genetics-add").disabled = rows.length >= 5;
+}
+function openManualGenetics() {
+  if (state.viewing) return;
+  $("#manual-genetics-form").reset();
+  $("#manual-genetic-findings").innerHTML = manualFindingMarkup(1);
+  updateManualFindingControls();
+  errorAt("#manual-genetics-error");
+  openDialog($("#manual-genetics-dialog"));
+}
+function addManualFinding() {
+  const count = $$("[data-manual-finding]").length;
+  if (count >= 5) return;
+  $("#manual-genetic-findings").insertAdjacentHTML("beforeend", manualFindingMarkup(count + 1));
+  updateManualFindingControls();
+  $$("[data-manual-finding]").at(-1).querySelector("[name=gene]").focus();
+}
+async function saveManualGenetics(event) {
+  event.preventDefault();
+  if (state.viewing || state.busy) return;
+  const form = event.currentTarget;
+  if (!form.reportValidity()) return;
+  const findings = $$("[data-manual-finding]").map(row => Object.fromEntries(MANUAL_GENETIC_KEYS.map(key => [key, row.querySelector('[name="' + key + '"]').value.trim()])));
+  const missing = findings.findIndex(finding => !finding.gene && !finding.variant);
+  if (missing !== -1) {
+    errorAt("#manual-genetics-error", "Mỗi mục cần có tên gen hoặc biến thể đúng như trên phiếu.");
+    $$("[data-manual-finding]")[missing].querySelector("[name=gene]").focus();
+    return;
+  }
+  errorAt("#manual-genetics-error");
+  const button = $("#manual-genetics-save"), original = button.textContent;
+  state.busy = true; button.disabled = true; button.textContent = "Đang lưu…";
+  const epoch = state.authEpoch;
+  try {
+    const values = form.elements;
+    const analysis = { document_type: "genetic_test_report", document_date: values.document_date.value || null,
+      provider: values.provider.value.trim(), title: values.title.value.trim(),
+      summary: values.summary.value.trim() || "Thông tin di truyền được người dùng chép tay từ phiếu xét nghiệm.",
+      genetic_findings: findings, confidence: "low", review_required: true, source: "manual",
+      disclaimer: "Nội dung nhập tay từ phiếu gốc, chưa được GeneSense xác minh hoặc diễn giải; không phải chẩn đoán." };
+    const document_hash = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, "0")).join("");
+    const saved = await api.saveMedicalRecord({ analysis, document_hash, health_consent: true });
+    if (epoch !== state.authEpoch) return;
+    state.medicalRecords = [saved, ...state.medicalRecords.filter(record => record.id !== saved.id)];
+    renderMedicalRecords();
+    closeDialog($("#manual-genetics-dialog"));
+    navigate("genetics");
+    $("#genetics-documents")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    toast("Đã lưu kết quả nhập tay. Hãy giữ phiếu gốc để đối chiếu với bác sĩ.");
+  } catch (error) { errorAt("#manual-genetics-error", error.message); }
+  finally { state.busy = false; button.disabled = false; button.textContent = original; }
 }
 
 function selectMedicalImage(event) {
@@ -1548,6 +1964,11 @@ async function saveMedicalRecord() {
   const applyVitals = $("#apply-vitals")?.checked;
   $("#document-apply").querySelectorAll("[data-apply-vital], #apply-date").forEach(el => { el.disabled = !applyVitals; });
   syncApplyMedicines();
+  $$("[data-genetic-field]").forEach(field => {
+    const finding = state.pendingMedical.analysis.genetic_findings?.[Number(field.dataset.geneticIndex)];
+    if (finding) finding[field.dataset.geneticField] = field.value.trim();
+  });
+  if (state.pendingMedical.analysis.document_type === "genetic_test_report") state.pendingMedical.analysis.review_required = true;
   if (!$("#document-apply").reportValidity()) return;
   // Checked before anything is saved, so a reading the server would refuse cannot leave the document half applied.
   const vitals = applyVitals ? documentVitals() : null;
@@ -1601,33 +2022,14 @@ function openMeasurement(mode = "manual") {
   errorAt("#measurement-error");
   $$("#measurement-form input[type=number]").forEach(input => fieldHint(input));
   openDialog($("#measurement-dialog"));
-  setMeasureMode(mode, false);
+  setMeasureMode(mode);
 }
-const SMOOTH = "cubic-bezier(.3, .7, .2, 1)";
-let measureSwap = 0;
-// Switching Nhập tay / Kết nối máy đo: the old panel fades out, the sheet eases to its new height, the new panel fades up.
-async function setMeasureMode(mode, animate = true) {
-  const dialog = $("#measurement-dialog"), next = $(mode === "manual" ? "#manual-panel" : "#device-panel");
-  const current = ["#manual-panel", "#device-panel"].map(id => $(id)).find(panel => !panel.hidden);
-  $$("[data-measure-mode]").forEach(button => button.classList.toggle("active", button.dataset.measureMode === mode));
-  const token = ++measureSwap;
-  const motion = animate && current !== next && dialog.open && !matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (motion) {
-    const fade = current.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 110, easing: "ease-in", fill: "forwards" });
-    // Never wait on the animation alone: a paused page (background tab) would leave the old panel up.
-    await Promise.race([fade.finished.catch(() => {}), new Promise(resolve => setTimeout(resolve, 160))]);
-    fade.cancel();
-    if (token !== measureSwap) return;
-  }
-  const from = dialog.offsetHeight;
+function setMeasureMode(mode) {
   $("#manual-panel").hidden = mode !== "manual";
   $("#device-panel").hidden = mode !== "device";
+  $$("[data-measure-mode]").forEach(button => button.classList.toggle("active", button.dataset.measureMode === mode));
   if (mode === "manual") stopStreams();
   errorAt("#measurement-error");
-  if (!motion) return;
-  const to = dialog.offsetHeight, box = { overflow: "hidden", boxSizing: "border-box" };
-  if (from !== to) dialog.animate([{ ...box, height: from + "px" }, { ...box, height: to + "px" }], { duration: 300, easing: SMOOTH });
-  next.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: SMOOTH });
 }
 function freshValues() {
   const now = Date.now();
@@ -1969,6 +2371,60 @@ async function signOut() {
     window.history.replaceState(null, "", "/");
   } catch (error) { toast(error.message, "error"); }
 }
+async function downloadAccountExport(button) {
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const blob = await api.exportData();
+    const url = URL.createObjectURL(blob), link = document.createElement("a");
+    link.href = url;
+    link.download = "genesense-du-lieu-ca-nhan.json";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Đã tạo bản sao dữ liệu. Ảnh giấy tờ trên thiết bị không nằm trong tệp này.");
+  } catch (error) { toast(error.message, "error"); }
+  finally { button.disabled = false; }
+}
+async function deleteAccountPermanently(button) {
+  if (button.disabled || !state.user) return;
+  const approved = await confirmAction("Xóa tài khoản và dữ liệu?",
+    "Thao tác này xóa hồ sơ, lần đo, giấy tờ, thuốc và liên kết người thân trên máy chủ; không thể hoàn tác. Ảnh giấy tờ trên thiết bị cũng sẽ bị xóa.",
+    "Xóa vĩnh viễn");
+  if (!approved) return;
+  button.disabled = true;
+  try {
+    const userId = state.user.id;
+    const result = await api.deleteAccount();
+    try {
+      await deletePendingForAccount(userId);
+      await Promise.all((result.deleted_medical_record_ids || []).map(id => scanRequest("readwrite", store => store.delete(id))));
+    } catch { /* The server account is already deleted; private-mode storage may be unavailable. */ }
+    clearAccount(); screen("login");
+    accountChannel?.postMessage("signed-out");
+    window.history.replaceState(null, "", "/");
+  } catch (error) { toast(error.message, "error"); button.disabled = false; }
+}
+async function markGeneticEvidenceReviewed(button) {
+  if (button.disabled) return;
+  const [recordId, indexText] = button.dataset.markEvidence.split(":"), index = Number(indexText);
+  const source = button.closest(".evidence-review")?.querySelector(`[data-evidence-source="${CSS.escape(button.dataset.markEvidence)}"]`)?.value;
+  if (!recordId || !Number.isInteger(index) || !source) return;
+  button.disabled = true;
+  try {
+    const updated = await api.reviewGeneticFinding(recordId, index, source);
+    state.medicalRecords = state.medicalRecords.map(record => record.id === updated.id ? updated : record);
+    const saved = updated.analysis.genetic_findings[index], labels = { clinvar: "ClinVar", clingen: "ClinGen", care_team: "Bác sĩ/nhóm chăm sóc" };
+    const note = button.closest(".evidence-review")?.querySelector(".note");
+    if (note) note.textContent = "Bạn đã ghi nhận tự đối chiếu với " + labels[saved.evidence_review_source] + " ngày " + date(saved.evidence_review_on, false) + ". Đây không phải xác nhận của GeneSense.";
+    button.textContent = "Cập nhật lần đối chiếu";
+    toast("Đã ghi nhận lần đối chiếu do bạn thực hiện. GeneSense chưa xác minh kết quả.");
+  } catch (error) { toast(error.message, "error"); button.disabled = false; }
+}
+function searchGeneticEvidence(button) {
+  const query = button.dataset.geneticsSearch;
+  if (!query || !window.confirm("Mở ClinVar sẽ gửi truy vấn “" + query + "” đến NCBI. Không gửi tên hay thông tin tài khoản. Bạn có muốn tiếp tục không?")) return;
+  window.open("https://www.ncbi.nlm.nih.gov/clinvar/?term=" + encodeURIComponent(query), "_blank", "noopener,noreferrer");
+}
 // step 1 opens the wizard straight at the family pages; the user returns to the tab they came from.
 function editProfile(step = 0, memberId = null) {
   if (state.viewing) return;
@@ -1981,6 +2437,9 @@ function editProfile(step = 0, memberId = null) {
   });
 }
 async function enterAccount(user) {
+  state.familyLinks = { relatives: [] };
+  state.familyInviteCode = null;
+  state.familyInvitePreview = null;
   state.user = user;
   const epoch = ++state.authEpoch;
   const data = await api.profile();
@@ -1993,7 +2452,7 @@ async function enterAccount(user) {
   } else {
     personalize(); screen("app");
     loadAvatar();
-    await Promise.all([refreshRecords(), refreshMedicalRecords(), refreshMedications(), refreshCare(), refreshRisk()]);
+    await Promise.all([refreshRecords(), refreshMedicalRecords(), refreshMedications(), refreshCare(), refreshFamilyLinks(), refreshRisk()]);
     navigate(location.hash.slice(1) || "dashboard");
     void syncPendingAssessments();
     offerDeviceImport();
@@ -2034,7 +2493,15 @@ function applyGlass(on) {
   document.body.classList.toggle("no-glass", !on);
   $("#glass-setting").checked = on;
 }
+function applyLargeText(on) {
+  document.documentElement.classList.toggle("large-text", on);
+  $("#large-text-setting").checked = on;
+}
 function bindEvents() {
+  $("#large-text-setting").addEventListener("change", event => {
+    applyLargeText(event.target.checked);
+    try { localStorage.setItem("genesense-large-text", event.target.checked ? "on" : "off"); } catch {}
+  });
   $("#glass-setting").addEventListener("change", event => {
     applyGlass(event.target.checked);
     try { localStorage.setItem("genesense-glass", event.target.checked ? "on" : "off"); } catch {}
@@ -2102,12 +2569,46 @@ function bindEvents() {
   $("#onboarding-form").addEventListener("submit", nextStep);
   $("#onboarding-form").addEventListener("change", event => {
     if (event.target.matches("[data-knowledge]")) {
-      const chips = event.target.closest("[data-member]").querySelector(".chips");
+      const memberCard = event.target.closest("[data-member]");
+      const chips = memberCard.querySelector(".chips");
       chips.hidden = event.target.value !== "known";
       if (chips.hidden) chips.querySelectorAll("input").forEach(input => input.checked = false);
-      const count = chips.parentElement.querySelector(".member-count");
-      // Reset the hidden field: an out-of-range number left in it would block the step with no visible message.
-      if (count) { count.hidden = chips.hidden; if (chips.hidden) count.querySelector("input").value = 1; }
+      const provenance = memberCard.querySelector(".family-provenance");
+      provenance.hidden = event.target.value === "unknown";
+      const memberId = memberCard.dataset.member;
+      const hereditaryKnown = $$('[data-hereditary] input:checked').some(input => input.value === memberId);
+      memberCard.querySelectorAll(".member-count").forEach(label => {
+        const input = label.querySelector("input");
+        const ageField = input.hasAttribute("data-diagnosis-age");
+        const hidden = ageField ? (chips.hidden && !hereditaryKnown) : chips.hidden;
+        label.hidden = hidden;
+        input.disabled = hidden;
+        // Clear optional details if the history is changed to unknown/none.
+        if (hidden && ageField) input.value = "";
+        else if (chips.hidden && input.hasAttribute("data-affected")) input.value = "1";
+        else if (chips.hidden && input.hasAttribute("data-brothers")) input.value = "0";
+      });
+    }
+    if (event.target.matches("[data-hereditary] input")) {
+      const who = event.target.value;
+      const memberCard = $('[data-member="' + who + '"]');
+      if (who === "maternal-uncle") {
+        const hereditaryKnown = $$('[data-hereditary] input:checked').some(input => input.value === who);
+        const age = $("[data-maternal-uncle-age]");
+        const uncleFields = $("#maternal-uncle-age-field");
+        uncleFields.hidden = !hereditaryKnown;
+        uncleFields.querySelectorAll("input, select").forEach(input => { input.disabled = !hereditaryKnown; });
+        age.disabled = !hereditaryKnown;
+        if (!hereditaryKnown) age.value = "";
+      }
+      if (who !== "self" && memberCard) {
+        const hereditaryKnown = $$('[data-hereditary] input:checked').some(input => input.value === who);
+        const generalKnown = memberCard.querySelector("[data-knowledge]").value === "known";
+        const age = memberCard.querySelector("[data-diagnosis-age]");
+        age.closest("label").hidden = !(generalKnown || hereditaryKnown);
+        age.disabled = !(generalKnown || hereditaryKnown);
+        if (!generalKnown && !hereditaryKnown) age.value = "";
+      }
     }
   });
   $("#step-back").addEventListener("click", () => { state.step = Math.max(0, state.step - 1); showStep(); });
@@ -2128,11 +2629,20 @@ function bindEvents() {
     if (record) showResult(record.dataset.record);
     const deleteRecord = event.target.closest("[data-delete-record]");
     if (deleteRecord) deleteMedicalRecord(deleteRecord.dataset.deleteRecord);
+    const exportButton = event.target.closest("#privacy-export");
+    if (exportButton) downloadAccountExport(exportButton);
+    const deleteAccountButton = event.target.closest("#account-delete");
+    if (deleteAccountButton) deleteAccountPermanently(deleteAccountButton);
+    const geneticsSearch = event.target.closest("[data-genetics-search]");
+    if (geneticsSearch) searchGeneticEvidence(geneticsSearch);
+    const markEvidence = event.target.closest("[data-mark-evidence]");
+    if (markEvidence) markGeneticEvidenceReviewed(markEvidence);
     const scan = event.target.closest("[data-view-scan]");
     if (scan) viewScan(scan.dataset.viewScan);
     const tab = event.target.closest("[data-records-tab]");
     if (tab) { state.recordsTab = tab.dataset.recordsTab; renderRecordsTab(); }
     if (event.target.closest("[data-open-medicines]")) { state.recordsTab = "medicines"; navigate("records"); }
+    if (event.target.closest("[data-add-medicine]")) { state.recordsTab = "medicines"; navigate("records"); openMedicine(); }
     if (event.target.closest("#medicine-print")) printMedicineSchedule();
     const historyTab = event.target.closest("[data-history-tab]");
     if (historyTab) showHistoryTab(historyTab.dataset.historyTab);
@@ -2142,11 +2652,21 @@ function bindEvents() {
     if (editMedicine) openMedicine(editMedicine.dataset.editMedicine);
 
     if (event.target.closest("[data-open-upload]")) openMedicalUpload();
+    if (event.target.closest("[data-open-manual-genetics]")) openManualGenetics();
+    const removeManualFinding = event.target.closest("[data-remove-manual-finding]");
+    if (removeManualFinding && $$("[data-manual-finding]").length > 1) { removeManualFinding.closest("[data-manual-finding]").remove(); updateManualFindingControls(); }
+    const geneticRecord = event.target.closest("[data-open-genetic-record]");
+    if (geneticRecord) openGeneticRecord(geneticRecord.dataset.openGeneticRecord);
+    if (event.target.closest("[data-open-genetics-summary]")) openReport();
     const viewTarget = event.target.closest("[data-view-patient]");
     if (viewTarget) viewPatient(viewTarget.dataset.viewPatient);
     const removeTarget = event.target.closest("[data-remove-link]");
     if (removeTarget) removeCareLink(removeTarget.dataset.removeLink, removeTarget.dataset.removeKind);
     if (event.target.closest("#care-create")) createCareCode();
+    if (event.target.closest("#family-create-invite")) createFamilyInvite();
+    if (event.target.closest("#family-invite-accept")) acceptFamilyInvite();
+    const removeFamily = event.target.closest("[data-family-remove]");
+    if (removeFamily) removeFamilyLink(removeFamily.dataset.familyRemove);
     if (event.target.closest("#exit-viewing")) exitViewing();
     if (event.target.closest("[data-open-measurement]")) openMeasurement();
     if (event.target.closest("#history-add")) openMeasurement();
@@ -2158,11 +2678,16 @@ function bindEvents() {
     else if (event.target.closest("[data-edit-hereditary]")) editProfile(LAST_STEP);
   });
   $("#edit-profile").addEventListener("click", () => editProfile());
-  document.addEventListener("submit", event => { if (event.target.id === "care-form") acceptCareCode(event); });
+  document.addEventListener("submit", event => {
+    if (event.target.id === "care-form") acceptCareCode(event);
+    if (event.target.id === "family-invite-preview-form") previewFamilyInvite(event);
+  });
   $$("dialog").forEach(dialog => dialog.addEventListener("cancel", event => { event.preventDefault(); closeDialog(dialog); }));
   $("#delete-assessment").addEventListener("click", event => deleteAssessment(event.currentTarget.dataset.id));
   $("#new-measurement").addEventListener("click", () => openMeasurement());
   $("#upload-record").addEventListener("click", openMedicalUpload);
+  $("#manual-genetics-add").addEventListener("click", addManualFinding);
+  $("#manual-genetics-form").addEventListener("submit", saveManualGenetics);
   $("#add-medicine").addEventListener("click", () => openMedicine());
   $("#medicine-form").addEventListener("submit", saveMedicine);
   $("#care-panel").addEventListener("change", event => {
@@ -2170,6 +2695,14 @@ function bindEvents() {
   });
   document.addEventListener("change", event => {
     if (event.target.matches("[data-medication-intake]")) setMedicationIntake(event.target);
+    if (event.target.matches("#family-confirm-relationship")) $("#family-invite-accept").disabled = !event.target.checked;
+    if (event.target.matches("[data-family-share]")) setFamilySharing(event.target);
+  });
+  document.addEventListener("input", event => {
+    if (event.target.matches("#family-invite-code") && state.familyInvitePreview?.code !== event.target.value.trim()) {
+      state.familyInvitePreview = null;
+      $(".family-invite-preview")?.remove();
+    }
   });
   $("#medicine-form").addEventListener("change", event => {
     const form = event.currentTarget;
@@ -2178,20 +2711,6 @@ function bindEvents() {
   $("#medicine-delete").addEventListener("click", () => deleteMedicine(state.editingMedicine));
   $("#medical-camera-file").addEventListener("change", selectMedicalImage);
   $("#medical-document-file").addEventListener("change", selectMedicalImage);
-  // In the iPhone app (ios/), the camera button opens Apple's document scanner: edges found, page flattened.
-  if (window.gsNative?.scan) {
-    const camera = $("#medical-camera-file");
-    camera.parentElement.lastElementChild.textContent = "Quét giấy tờ";
-    camera.addEventListener("click", async event => {
-      event.preventDefault();
-      const blob = await window.gsNative.scan();
-      if (!blob) return;
-      const files = new DataTransfer();
-      files.items.add(new File([blob], "giay-to.jpg", { type: "image/jpeg" }));
-      camera.files = files.files;
-      camera.dispatchEvent(new Event("change"));
-    });
-  }
   $("#document-ai-consent").addEventListener("change", updateDocumentButton);
   $("#analyze-document").addEventListener("click", analyzeMedicalDocument);
   $("#analyze-another").addEventListener("click", resetMedicalUpload);
@@ -2231,7 +2750,7 @@ function bindEvents() {
   $("#open-report").addEventListener("click", openReport);
   $("#report-days").addEventListener("change", renderReport);
   $("#report-print").addEventListener("click", () => window.print());
-  $("#report-back").addEventListener("click", () => { if (reportLayer) { reportLayer = false; dropLayer(); } screen("app"); navigate("history"); });
+  $("#report-back").addEventListener("click", () => { if (reportLayer) { reportLayer = false; dropLayer(); } screen("app"); navigate(state.reportReturnView || "history"); });
   $("#history-filter").addEventListener("change", () => { state.historyAll = false; renderHistory(); });
   $("#history-list").addEventListener("click", event => { if (event.target.closest("#history-more")) { state.historyAll = true; renderHistory(); } });
   // Charts are drawn at the width they have at that moment, so they are drawn again when the window changes size.
@@ -2295,5 +2814,6 @@ hydrateIcons();
 takeDeviceImportFromLink();
 bindEvents();
 try { applyGlass(localStorage.getItem("genesense-glass") !== "off"); } catch { applyGlass(true); }
+try { applyLargeText(localStorage.getItem("genesense-large-text") === "on"); } catch { applyLargeText(false); }
 if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
 boot();

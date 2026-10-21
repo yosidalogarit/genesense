@@ -116,6 +116,34 @@ class CareLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class FamilyInvite(Base):
+    """Single-use code for a consent-based genetic-history connection."""
+
+    __tablename__ = "family_invites"
+
+    code_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    inviter_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    # Relationship of the invited account to the inviter, confirmed by both accounts.
+    relative_relation: Mapped[str] = mapped_column(String(20))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FamilyLink(Base):
+    """A confirmed family relationship with independent, revocable sharing consent."""
+
+    __tablename__ = "family_links"
+    __table_args__ = (UniqueConstraint("inviter_id", "relative_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    inviter_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    relative_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    # Relationship of relative_id to inviter_id, shown reciprocally to each account.
+    relative_relation: Mapped[str] = mapped_column(String(20))
+    inviter_shares_conditions: Mapped[bool] = mapped_column(Boolean, default=False)
+    relative_shares_conditions: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Medication(Base):
     """One medicine on the user's schedule. It gets here only after the user typed it or checked it after a scan."""
 

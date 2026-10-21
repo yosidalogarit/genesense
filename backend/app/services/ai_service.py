@@ -59,7 +59,7 @@ MEDICAL_DOCUMENT_SCHEMA = {
     "properties": {
         "document_type": {
             "type": "string",
-            "enum": ["lab_result", "prescription", "discharge_note", "imaging_report", "vaccination", "other"],
+            "enum": ["lab_result", "genetic_test_report", "prescription", "discharge_note", "imaging_report", "vaccination", "other"],
         },
         "document_date": {"description": "Date printed on the document, written as YYYY-MM-DD.",
                           "anyOf": [{"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"}, {"type": "null"}]},
@@ -103,6 +103,30 @@ MEDICAL_DOCUMENT_SCHEMA = {
                 "required": ["member", "condition"],
             },
         },
+        "genetic_findings": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "gene": {"type": "string", "maxLength": 60},
+                    "variant": {"type": "string", "maxLength": 240},
+                    "transcript": {"type": "string", "maxLength": 100},
+                    "genome_build": {"type": "string", "maxLength": 40},
+                    "hgvs_genomic": {"type": "string", "maxLength": 180},
+                    "hgvs_coding": {"type": "string", "maxLength": 180},
+                    "hgvs_protein": {"type": "string", "maxLength": 180},
+                    "rsid": {"type": "string", "maxLength": 40},
+                    "zygosity": {"type": "string", "maxLength": 100},
+                    "classification": {"type": "string", "maxLength": 120},
+                    "condition": {"type": "string", "maxLength": 200},
+                    "source_excerpt": {"type": "string", "maxLength": 300},
+                },
+                "required": ["gene", "variant", "transcript", "genome_build", "hgvs_genomic", "hgvs_coding",
+                             "hgvs_protein", "rsid", "zygosity", "classification", "condition", "source_excerpt"],
+            },
+        },
         "medications": {
             "type": "array",
             "maxItems": 30,
@@ -130,7 +154,7 @@ MEDICAL_DOCUMENT_SCHEMA = {
     },
     "required": [
         "document_type", "document_date", "provider", "title", "summary", "metrics", "conditions",
-        "vitals", "own_conditions", "family_conditions",
+        "vitals", "own_conditions", "family_conditions", "genetic_findings",
         "medications", "recommendations", "warnings", "confidence", "review_required", "source", "disclaimer",
     ],
 }
@@ -255,6 +279,41 @@ def _medical_analysis_from_json(output: str) -> MedicalDocumentAnalysis:
     family = data.get("family_conditions") if isinstance(data.get("family_conditions"), list) else []
     data["family_conditions"] = [item for item in family if isinstance(item, dict)
                                  and item.get("member") in DOCUMENT_MEMBERS and item.get("condition") in DOCUMENT_CONDITIONS]
+    raw_findings = data.get("genetic_findings") if isinstance(data.get("genetic_findings"), list) else []
+    finding_limits = {"gene": 60, "variant": 240, "transcript": 100, "genome_build": 40,
+                      "hgvs_genomic": 180, "hgvs_coding": 180, "hgvs_protein": 180, "rsid": 40,
+                      "zygosity": 100, "classification": 120, "condition": 200, "source_excerpt": 300}
+    finding_fields = tuple(finding_limits)
+    unknown_values = {"unknown", "n/a", "none", "null", "không rõ", "không ghi", "không thấy"}
+    findings = []
+    for item in raw_findings[:20]:
+        if not isinstance(item, dict):
+            continue
+        clean = {}
+        for field in finding_fields:
+            value = str(item.get(field) or "").strip()[:finding_limits[field]]
+            clean[field] = "" if value.lower() in unknown_values else value
+        if any(clean[field] for field in ("gene", "variant", "classification", "condition")):
+            findings.append(clean)
+    data["genetic_findings"] = findings
+    if data.get("document_type") == "genetic_test_report":
+        data["review_required"] = True
+        # A genetic report is evidence to review, never an automatic diagnosis/profile update.
+        data["vitals"] = {key: None for key in DOCUMENT_VITALS}
+        data["metrics"] = []
+        data["own_conditions"] = []
+        data["family_conditions"] = []
+        data["medications"] = []
+        data["warnings"] = list(dict.fromkeys([
+            *(data.get("warnings") or []),
+            "Đây là thông tin được trích từ phiếu, không phải diễn giải biến thể của GeneSense. Hãy đối chiếu với bản gốc và chuyên gia di truyền.",
+        ]))[:20]
+        data["disclaimer"] = "GeneSense chỉ chép lại thông tin nhìn thấy trên phiếu; không xác định nguy cơ, không chẩn đoán và không phân loại lại biến thể."
+        if not findings:
+            data["warnings"].append("Chưa trích được thông tin biến thể rõ ràng. Hãy nhập lại từ bản gốc hoặc hỏi nơi xét nghiệm.")
+    else:
+        # Do not present genetic fields under a generic laboratory-document label.
+        data["genetic_findings"] = []
     return MedicalDocumentAnalysis.model_validate(data)
 
 
@@ -422,6 +481,13 @@ class AIInsightService:
             "own_conditions: chỉ ghi bệnh mà giấy nêu rõ là chẩn đoán của người bệnh. family_conditions: chỉ ghi khi giấy "
             "nêu rõ tiền sử gia đình kèm người thân cụ thể (bố, mẹ, anh chị em ruột, ông bà nội, ông bà ngoại); không suy "
             "ra từ họ tên hay từ bệnh của người bệnh. "
+            "Nếu tài liệu là phiếu xét nghiệm di truyền rõ ràng, đặt document_type=genetic_test_report và chỉ chép các "
+            "trường nhìn thấy trực tiếp vào genetic_findings: gene, variant, transcript accession, genome_build/hệ gen "
+            "tham chiếu, hgvs_genomic (g.), hgvs_coding (c.), hgvs_protein (p.), rsid, zygosity, classification/kết luận của "
+            "phòng xét nghiệm, condition và một đoạn source_excerpt ngắn để người dùng đối chiếu. Giữ nguyên cách viết "
+            "trên phiếu; không tự tạo, chuẩn hóa hay chuyển đổi mã HGVS/rsID, không suy luận kiểu di truyền, không tra cứu thay người dùng và tuyệt đối không "
+            "tự phân loại lại pathogenic/benign/VUS. Trường không nhìn thấy thì để chuỗi rỗng; luôn đặt review_required=true, "
+            "thêm cảnh báo cần người dùng và chuyên gia xem lại. Không đưa tên/mã định danh vào source_excerpt. "
             "medications: với mỗi thuốc trên đơn, name là tên thuốc, strength là hàm lượng (ví dụ 500 mg), dose là số "
             "lượng mỗi lần đúng như ghi (ví dụ 1 viên), frequency chép NGUYÊN VĂN cách dùng trên đơn (ví dụ '1-0-1', "
             "'sáng 1 viên, tối 1 viên', 'ngày 2 lần'), không tự đổi thành buổi uống. meal là before hoặc after khi đơn "

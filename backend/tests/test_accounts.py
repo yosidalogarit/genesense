@@ -59,7 +59,7 @@ def login(client):
 
 
 def test_private_routes_require_login_and_do_not_cache(client):
-    for path in ("/api/profile", "/api/assessments", "/api/assessments/unknown", "/api/medical-records"):
+    for path in ("/api/profile", "/api/assessments", "/api/assessments/unknown", "/api/medical-records", "/api/privacy/export"):
         response = client.get(path)
         assert response.status_code == 401
         assert response.headers["cache-control"] == "no-store"
@@ -390,6 +390,37 @@ def test_public_trial_login_is_capped_per_hour(client, monkeypatch):
     assert client.post("/api/auth/demo").status_code == 404
 
 
+def test_manual_genetic_report_is_saved_with_source_and_requires_a_finding(client):
+    login(client)
+    client.put("/api/profile", json=PROFILE)
+    analysis = {
+        "document_type": "genetic_test_report", "document_date": "2026-10-20",
+        "provider": "Cơ sở giả định", "title": "Phiếu di truyền giả định",
+        "summary": "Dữ liệu tổng hợp để thử nhập tay.",
+        "genetic_findings": [{"gene": "HBB", "variant": "c.20A>T", "classification": "Ghi theo phiếu giả định"}],
+        "confidence": "low", "source": "manual",
+        "disclaimer": "Người dùng nhập tay; không phải chẩn đoán.",
+    }
+    saved = client.post("/api/medical-records", json={
+        "analysis": analysis, "document_hash": "a" * 64, "health_consent": True,
+    })
+    assert saved.status_code == 201
+    body = saved.json()["analysis"]
+    assert body["source"] == "manual"
+    assert body["review_required"] is True
+    assert body["genetic_findings"][0]["variant"] == "c.20A>T"
+    assert client.get("/api/medical-records").json()[0]["analysis"]["source"] == "manual"
+
+    empty = {**analysis, "genetic_findings": [{"classification": "Không rõ"}]}
+    assert client.post("/api/medical-records", json={
+        "analysis": empty, "document_hash": "b" * 64, "health_consent": True,
+    }).status_code == 422
+    wrong_type = {**analysis, "document_type": "lab_result"}
+    assert client.post("/api/medical-records", json={
+        "analysis": wrong_type, "document_hash": "c" * 64, "health_consent": True,
+    }).status_code == 422
+
+
 def test_medical_document_requires_review_then_is_account_scoped(client, monkeypatch):
     login(client)
     client.put("/api/profile", json=PROFILE)
@@ -652,6 +683,67 @@ def test_care_link_grants_read_only_access_until_revoked(client):
     assert client.get("/api/risk").json()["scores"]["vitals"] is None  # the caregiver has no reading of their own
 
 
+def test_family_link_requires_relationship_confirmation_and_separate_genetic_consent(client):
+    parent, parent_cookie = _demo_with_profile(client)
+    assert client.put("/api/profile", json=PROFILE | {
+        "profile": PROFILE["profile"] | {"known_conditions": ["g6pd", "hypertension"]}
+    }).status_code == 200
+    invite = client.post("/api/care/family/invites", json={"relative_relation": "child"})
+    assert invite.status_code == 201
+    code = invite.json()["code"]
+    assert invite.json()["relative_relation_label"] == "con"
+    assert client.post("/api/care/family/invites/preview", json={"code": code}).status_code == 400
+
+    client.cookies.clear()
+    child, child_cookie = _demo_with_profile(client)
+    assert client.put("/api/profile", json=PROFILE | {
+        "profile": PROFILE["profile"] | {"known_conditions": ["thalassemia"]}
+    }).status_code == 200
+    base = "/api/care/family"
+    assert client.post(base + "/invites/preview", json={"code": "WRONGCODE"}).status_code == 404
+    preview = client.post(base + "/invites/preview", json={"code": code.lower()})
+    assert preview.status_code == 200
+    assert preview.json()["display_name"] == PROFILE["display_name"]
+    assert preview.json()["inviter_relation_label"] == "cha/mẹ"
+    assert client.get(base + "/links").json() == {"relatives": []}
+    assert client.post(base + "/links", json={"code": code, "confirm_relationship": False}).status_code == 422
+    accepted = client.post(base + "/links", json={"code": code, "confirm_relationship": True})
+    assert accepted.status_code == 201 and accepted.json()["display_name"] == PROFILE["display_name"]
+    link_id = accepted.json()["link_id"]
+
+    child_link = client.get(base + "/links").json()["relatives"][0]
+    assert child_link["relation_label"] == "cha/mẹ"
+    assert child_link["their_share"] is False and child_link["conditions"] == []
+    assert client.get("/api/care/links").json() == {"patients": [], "caregivers": []}  # separate from caregiver access
+    assert set(child_link) == {"link_id", "display_name", "relation", "relation_label", "my_share", "their_share", "conditions", "created_at"}
+
+    _as(client, parent_cookie)
+    parent_link = client.get(base + "/links").json()["relatives"][0]
+    assert parent_link["relation_label"] == "con" and parent_link["conditions"] == []
+    assert client.put(base + f"/links/{link_id}/sharing", json={"share_conditions": True}).status_code == 200
+    _as(client, child_cookie)
+    received = client.get(base + "/links").json()["relatives"][0]
+    assert received["their_share"] is True and received["conditions"] == ["g6pd"]
+    assert "hypertension" not in received["conditions"]  # unrelated health conditions stay private
+
+    _as(client, parent_cookie)
+    assert client.put("/api/profile", json=PROFILE | {
+        "profile": PROFILE["profile"] | {"known_conditions": ["ovarian_cancer"]}
+    }).status_code == 200
+    _as(client, child_cookie)
+    refreshed = client.get(base + "/links").json()["relatives"][0]
+    assert refreshed["conditions"] == ["ovarian_cancer"]  # reads the latest profile instead of a copied snapshot
+    assert client.put(base + f"/links/{link_id}/sharing", json={"share_conditions": True}).status_code == 200
+
+    _as(client, parent_cookie)
+    received = client.get(base + "/links").json()["relatives"][0]
+    assert received["their_share"] is True and received["conditions"] == ["thalassemia"]
+    assert client.delete(base + f"/links/{link_id}").status_code == 204
+    assert client.get(base + "/links").json() == {"relatives": []}
+    _as(client, child_cookie)
+    assert client.get(base + "/links").json() == {"relatives": []}
+
+
 def test_caregiver_sees_medicines_only_after_explicit_opt_in(client):
     patient, patient_cookie = _demo_with_profile(client)
     today = datetime.now(timezone.utc).date().isoformat()
@@ -698,3 +790,99 @@ def test_care_invite_expiry_replacement_and_rate_limit(client):
     for _ in range(3):
         assert client.post("/api/care/links", json={"code": "WRONGCODE"}).status_code == 404
     assert client.post("/api/care/links", json={"code": "WRONGCODE"}).status_code == 429
+
+
+GENETIC_REPORT = {
+    "document_type": "genetic_test_report", "document_date": "2026-01-15", "provider": "Phòng xét nghiệm thử",
+    "title": "Kết quả xét nghiệm di truyền", "summary": "Phiếu ghi nhận một biến thể cần được chuyên gia xem xét.",
+    "confidence": "medium", "review_required": True, "disclaimer": "Chỉ trích thông tin từ phiếu; không chẩn đoán.",
+    "genetic_findings": [{"gene": "HBB", "variant": "c.20A>T", "classification": "Pathogenic", "condition": "Thalassemia"}],
+}
+
+
+def _save_genetic_record(client):
+    response = client.post("/api/medical-records", json={
+        "analysis": GENETIC_REPORT, "document_hash": "a" * 64, "health_consent": True,
+    })
+    assert response.status_code == 201
+    return response.json()
+
+
+def test_family_history_provenance_is_saved_and_unknown_is_not_assumed(client):
+    login(client)
+    payload = PROFILE | {"family_history": [
+        {"member_id": "father", "relation": "father", "knowledge": "known", "conditions": ["thalassemia"],
+         "source": "document_checked", "last_confirmed_on": "2026-03-02"},
+        {"member_id": "mother", "relation": "mother", "knowledge": "unknown", "source": "clinician_reviewed",
+         "last_confirmed_on": "2026-03-02"},
+    ]}
+    saved = client.put("/api/profile", json=payload)
+    assert saved.status_code == 200
+    father, mother = saved.json()["health"]["family_history"]
+    assert father["source"] == "document_checked" and father["last_confirmed_on"] == "2026-03-02"
+    assert mother["source"] == "unknown" and mother["last_confirmed_on"] is None
+    future = payload | {"family_history": [payload["family_history"][0] | {"last_confirmed_on": "2999-01-01"}]}
+    assert client.put("/api/profile", json=future).status_code == 422
+
+
+def test_genetic_source_review_is_account_scoped_and_explicitly_user_recorded(client):
+    login(client)
+    owner_cookie = client.cookies.get(auth.COOKIE_NAME)
+    record = _save_genetic_record(client)
+    url = f"/api/medical-records/{record['id']}/genetic-findings/0/review"
+    assert client.put(url, json={"source": "invalid"}).status_code == 422
+    assert client.put(f"/api/medical-records/{record['id']}/genetic-findings/5/review", json={"source": "clinvar"}).status_code == 404
+    client.cookies.clear()
+    login(client)
+    assert client.put(url, json={"source": "clinvar"}).status_code == 404
+    _as(client, owner_cookie)
+    reviewed = client.put(url, json={"source": "clinvar"})
+    assert reviewed.status_code == 200, reviewed.text
+    finding = reviewed.json()["analysis"]["genetic_findings"][0]
+    assert reviewed.status_code == 200
+    assert finding["evidence_review_source"] == "clinvar"
+    assert finding["evidence_review_on"] == datetime.now(timezone.utc).date().isoformat()
+
+
+def test_account_export_contains_owned_health_data_and_is_not_cached(client):
+    login(client)
+    client.put("/api/profile", json=PROFILE)
+    client.post("/api/assessments", json=MEASUREMENT)
+    client.put("/api/avatar", content=b"\xff\xd8\xff\xe0" + b"0" * 100)
+    _save_genetic_record(client)
+    response = client.get("/api/privacy/export")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "attachment; filename=\"genesense-export-" in response.headers["content-disposition"]
+    data = response.json()
+    assert data["health_profile"]["display_name"] == PROFILE["display_name"]
+    assert data["avatar"]["media_type"] == "image/jpeg" and data["avatar"]["base64"]
+    assert len(data["assessments"]) == len(data["medical_records"]) == 1
+    assert data["medical_records"][0]["analysis"]["genetic_findings"][0]["gene"] == "HBB"
+    assert "Ảnh giấy tờ gốc" in data["not_included"][0]
+
+
+def test_account_deletion_removes_server_data_and_returns_only_owned_scan_ids(client):
+    login(client)
+    owner_cookie = client.cookies.get(auth.COOKIE_NAME)
+    client.get("/api/auth/me")
+    client.put("/api/profile", json=PROFILE)
+    client.post("/api/assessments", json=MEASUREMENT)
+    record = _save_genetic_record(client)
+    client.cookies.clear()
+    other = login(client)
+    other_cookie = client.cookies.get(auth.COOKIE_NAME)
+
+    _as(client, owner_cookie)
+    assert client.request("DELETE", "/api/account", json={"confirm_delete": False}).status_code == 422
+    deleted = client.request("DELETE", "/api/account", json={"confirm_delete": True})
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted_medical_record_ids"] == [record["id"]]
+    assert client.get("/api/auth/me").status_code == 401
+    async def remaining_ids():
+        async with client.db_factory() as session:
+            return list(await session.scalars(select(User.id).order_by(User.id)))
+    assert asyncio.run(remaining_ids()) == [other["id"]]
+    _as(client, other_cookie)
+    assert client.get("/api/profile").status_code == 200
+    assert client.get("/api/medical-records").json() == []

@@ -2,6 +2,7 @@
 import hashlib
 import secrets
 from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import current_user
 from .database import get_session
-from .models import Assessment, CareCodeFailure, CareInvite, CareLink, Medication, MedicationIntake, User
+from .models import Assessment, CareCodeFailure, CareInvite, CareLink, FamilyInvite, FamilyLink, Medication, MedicationIntake, User
 from .schemas import AccountProfile, AssessmentHistoryItem, AssessmentResult, BloodPressureAverage, WeeklyBloodPressureSummary
 from .services.risk_engine import risk_overview
 
@@ -26,6 +27,19 @@ FAILED_WINDOW_SECONDS = 15 * 60
 
 class CareLinkCreate(BaseModel):
     code: str = Field(min_length=4, max_length=32)
+
+
+class FamilyInviteCreate(BaseModel):
+    relative_relation: Literal["parent", "child", "sibling", "grandparent", "grandchild", "other"]
+
+
+class FamilyLinkCreate(BaseModel):
+    code: str = Field(min_length=4, max_length=32)
+    confirm_relationship: bool
+
+
+class FamilySharingUpdate(BaseModel):
+    share_conditions: bool
 
 
 def _digest(code: str) -> str:
@@ -163,6 +177,159 @@ async def remove_link(link_id: str, user: User = Depends(current_user), session:
     link = await session.get(CareLink, link_id)
     if not link or user.id not in (link.patient_id, link.caregiver_id):
         raise HTTPException(404, "Không tìm thấy liên kết này.")
+    await session.delete(link)
+    await session.commit()
+    return Response(status_code=204)
+
+
+FAMILY_RELATION_LABELS = {
+    "parent": "cha/mẹ",
+    "child": "con",
+    "sibling": "anh/chị/em ruột",
+    "grandparent": "ông/bà",
+    "grandchild": "cháu",
+    "other": "người thân khác",
+}
+FAMILY_RELATION_REVERSE = {
+    "parent": "child", "child": "parent", "sibling": "sibling",
+    "grandparent": "grandchild", "grandchild": "grandparent", "other": "other",
+}
+SHARED_HEREDITARY_CONDITIONS = {"thalassemia", "g6pd", "ovarian_cancer", "familial_hypercholesterolemia"}
+
+
+def _is_family_member(user: User) -> bool:
+    return bool(user.onboarding_completed and user.health_profile)
+
+
+def _family_share_for(link: FamilyLink, user_id: str) -> tuple[bool, bool]:
+    if user_id == link.inviter_id:
+        return link.inviter_shares_conditions, link.relative_shares_conditions
+    return link.relative_shares_conditions, link.inviter_shares_conditions
+
+
+def _shared_conditions(user: User) -> list[str]:
+    profile = (user.health_profile or {}).get("profile") or {}
+    return sorted(set(profile.get("known_conditions", [])) & SHARED_HEREDITARY_CONDITIONS)
+
+
+async def _family_invite(code: str, user: User, session: AsyncSession) -> FamilyInvite:
+    since = datetime.now(timezone.utc) - timedelta(seconds=FAILED_WINDOW_SECONDS)
+    failures = await session.scalar(select(func.count()).select_from(CareCodeFailure).where(
+        CareCodeFailure.user_id == user.id, CareCodeFailure.created_at >= since))
+    if failures >= MAX_FAILED_CODES:
+        raise HTTPException(429, "Bạn đã nhập sai mã quá nhiều lần. Hãy thử lại sau 15 phút.")
+    invite = await session.get(FamilyInvite, _digest(_normalize(code)))
+    if not invite or _aware(invite.expires_at) <= datetime.now(timezone.utc):
+        session.add(CareCodeFailure(user_id=user.id))
+        await session.commit()
+        raise HTTPException(404, "Mã không đúng hoặc đã hết hạn. Hãy xin người thân tạo mã mới.")
+    if invite.inviter_id == user.id:
+        raise HTTPException(400, "Đây là mã của chính bạn. Hãy gửi mã này cho người thân.")
+    return invite
+
+
+@router.post("/family/invites", status_code=201)
+async def create_family_invite(payload: FamilyInviteCreate, user: User = Depends(current_user),
+                               session: AsyncSession = Depends(get_session)):
+    if not _is_family_member(user):
+        raise HTTPException(409, "Hãy hoàn thành hồ sơ trước khi mời người thân.")
+    await session.execute(delete(FamilyInvite).where(FamilyInvite.inviter_id == user.id))
+    code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=INVITE_HOURS)
+    session.add(FamilyInvite(code_hash=_digest(code), inviter_id=user.id,
+                             relative_relation=payload.relative_relation, expires_at=expires_at))
+    await session.commit()
+    return {"code": code, "expires_at": expires_at,
+            "relative_relation": payload.relative_relation,
+            "relative_relation_label": FAMILY_RELATION_LABELS[payload.relative_relation]}
+
+
+@router.post("/family/invites/preview")
+async def preview_family_invite(payload: CareLinkCreate, user: User = Depends(current_user),
+                                session: AsyncSession = Depends(get_session)):
+    if not _is_family_member(user):
+        raise HTTPException(409, "Hãy hoàn thành hồ sơ trước khi liên kết người thân.")
+    invite = await _family_invite(payload.code, user, session)
+    inviter = await session.get(User, invite.inviter_id)
+    return {"display_name": inviter.display_name,
+            "inviter_relation": FAMILY_RELATION_REVERSE[invite.relative_relation],
+            "inviter_relation_label": FAMILY_RELATION_LABELS[FAMILY_RELATION_REVERSE[invite.relative_relation]],
+            "expires_at": invite.expires_at}
+
+
+@router.post("/family/links", status_code=201)
+async def accept_family_invite(payload: FamilyLinkCreate, user: User = Depends(current_user),
+                               session: AsyncSession = Depends(get_session)):
+    if not _is_family_member(user):
+        raise HTTPException(409, "Hãy hoàn thành hồ sơ trước khi liên kết người thân.")
+    if payload.confirm_relationship is not True:
+        raise HTTPException(422, "Bạn cần xác nhận quan hệ gia đình trước khi liên kết.")
+    invite = await _family_invite(payload.code, user, session)
+    existing = await session.scalar(select(FamilyLink).where(or_(
+        (FamilyLink.inviter_id == invite.inviter_id) & (FamilyLink.relative_id == user.id),
+        (FamilyLink.inviter_id == user.id) & (FamilyLink.relative_id == invite.inviter_id),
+    )))
+    if existing:
+        await session.delete(invite)
+        await session.execute(delete(CareCodeFailure).where(CareCodeFailure.user_id == user.id))
+        await session.commit()
+        return {"link_id": existing.id, "display_name": (await session.get(User, invite.inviter_id)).display_name}
+    inviter = await session.get(User, invite.inviter_id)
+    link = FamilyLink(inviter_id=invite.inviter_id, relative_id=user.id,
+                      relative_relation=invite.relative_relation)
+    session.add(link)
+    await session.delete(invite)
+    await session.execute(delete(CareCodeFailure).where(CareCodeFailure.user_id == user.id))
+    await session.flush()
+    result = {"link_id": link.id, "display_name": inviter.display_name}
+    await session.commit()
+    return result
+
+
+@router.get("/family/links")
+async def list_family_links(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    links = list(await session.scalars(select(FamilyLink).where(or_(
+        FamilyLink.inviter_id == user.id, FamilyLink.relative_id == user.id
+    )).order_by(FamilyLink.created_at)))
+    result = []
+    for link in links:
+        other_id = link.relative_id if user.id == link.inviter_id else link.inviter_id
+        other = await session.get(User, other_id)
+        my_share, their_share = _family_share_for(link, user.id)
+        relation = link.relative_relation if user.id == link.inviter_id else FAMILY_RELATION_REVERSE[link.relative_relation]
+        result.append({
+            "link_id": link.id,
+            "display_name": other.display_name,
+            "relation": relation,
+            "relation_label": FAMILY_RELATION_LABELS[relation],
+            "my_share": my_share,
+            "their_share": their_share,
+            "conditions": _shared_conditions(other) if their_share else [],
+            "created_at": link.created_at,
+        })
+    return {"relatives": result}
+
+
+@router.put("/family/links/{link_id}/sharing")
+async def update_family_sharing(link_id: str, payload: FamilySharingUpdate, user: User = Depends(current_user),
+                                session: AsyncSession = Depends(get_session)):
+    link = await session.get(FamilyLink, link_id)
+    if not link or user.id not in (link.inviter_id, link.relative_id):
+        raise HTTPException(404, "Không tìm thấy liên kết gia đình.")
+    if user.id == link.inviter_id:
+        link.inviter_shares_conditions = payload.share_conditions
+    else:
+        link.relative_shares_conditions = payload.share_conditions
+    await session.commit()
+    return {"share_conditions": payload.share_conditions}
+
+
+@router.delete("/family/links/{link_id}", status_code=204)
+async def remove_family_link(link_id: str, user: User = Depends(current_user),
+                             session: AsyncSession = Depends(get_session)):
+    link = await session.get(FamilyLink, link_id)
+    if not link or user.id not in (link.inviter_id, link.relative_id):
+        raise HTTPException(404, "Không tìm thấy liên kết gia đình.")
     await session.delete(link)
     await session.commit()
     return Response(status_code=204)

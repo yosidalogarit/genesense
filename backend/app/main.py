@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import secrets
 from contextlib import asynccontextmanager
@@ -7,24 +8,27 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .auth import current_user, public_user, router as auth_router
+from .auth import COOKIE_NAME, current_user, public_user, router as auth_router
 from .care import current_vital_score, router as care_router, weekly_bp_summary
 from .config import get_settings
 from .database import engine, get_session
 from .migrations import migrate_schema
-from .models import Assessment, Avatar, Feedback, MedicalRecord, Medication, MedicationIntake, User
+from .models import (Assessment, Avatar, CareCodeFailure, CareInvite, CareLink, FamilyInvite, FamilyLink,
+                     Feedback, LoginSession, MedicalRecord, Medication, MedicationIntake, User)
 from .schemas import (AccountProfile, AssessmentCreate, AssessmentHistoryItem, AssessmentResult,
+                      DeleteAccountRequest, GeneticEvidenceReviewInput,
                       FeedbackCreate, FeedbackResult, MedicalDocumentAnalyzeResult,
-                      MedicalRecordCreate, MedicalRecordResult, MeasurementCreate,
+                      MedicalDocumentAnalysis, MedicalRecordCreate, MedicalRecordResult, MeasurementCreate,
                       MedicationInput, MedicationIntakeResult, MedicationIntakeUpdate, MedicationResult,
                       WeeklyBloodPressureSummary)
 from .services.ai_service import AIInsightService
@@ -111,6 +115,90 @@ async def health():
 @app.get("/api/profile")
 async def get_profile(user: User = Depends(current_user)):
     return {"user": public_user(user), "health": user.health_profile}
+
+
+@app.get("/api/privacy/export")
+async def export_account_data(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Download the authenticated user's server-side data; device-only scans are not stored here."""
+    assessments = list(await session.scalars(select(Assessment).where(Assessment.user_id == user.id)
+                                             .order_by(Assessment.created_at)))
+    medical_records = list(await session.scalars(select(MedicalRecord).where(MedicalRecord.user_id == user.id)
+                                                  .order_by(MedicalRecord.created_at)))
+    medications = list(await session.scalars(select(Medication).where(Medication.user_id == user.id)
+                                              .order_by(Medication.created_at)))
+    intakes = list(await session.scalars(select(MedicationIntake).where(MedicationIntake.user_id == user.id)
+                                          .order_by(MedicationIntake.scheduled_on, MedicationIntake.slot)))
+    feedback = list(await session.scalars(select(Feedback).where(Feedback.user_id == user.id)
+                                           .order_by(Feedback.created_at)))
+    family_links = list(await session.scalars(select(FamilyLink).where(or_(
+        FamilyLink.inviter_id == user.id, FamilyLink.relative_id == user.id))))
+    care_links = list(await session.scalars(select(CareLink).where(or_(
+        CareLink.patient_id == user.id, CareLink.caregiver_id == user.id))))
+    avatar = await session.get(Avatar, user.id)
+    payload = {
+        "exported_at": datetime.now(timezone.utc),
+        "account": {"id": user.id, "email": user.email, "display_name": user.display_name,
+                    "created_at": user.created_at, "onboarding_completed": user.onboarding_completed},
+        "avatar": {"media_type": "image/jpeg", "base64": base64.b64encode(avatar.image).decode("ascii")} if avatar else None,
+        "health_profile": user.health_profile,
+        "assessments": [{"id": row.id, "created_at": row.created_at, "profile": row.profile,
+                         "family_history": row.family_history, "vitals": row.vitals,
+                         "risk_level": row.risk_level, "scores": {"overall": row.overall_score,
+                         "family": row.pgrs_score, "body": row.brs_score, "vitals": row.vital_score},
+                         "result": row.result} for row in assessments],
+        "medical_records": [{"id": row.id, "created_at": row.created_at, "analysis": row.analysis}
+                            for row in medical_records],
+        "medications": [{"id": row.id, "created_at": row.created_at, "name": row.name,
+                         "strength": row.strength, "amount": row.amount, "morning": row.morning,
+                         "noon": row.noon, "afternoon": row.afternoon, "evening": row.evening,
+                         "meal": row.meal, "start_date": row.start_date, "days": row.days, "note": row.note}
+                        for row in medications],
+        "medication_intakes": [{"medication_id": row.medication_id, "scheduled_on": row.scheduled_on,
+                                "slot": row.slot, "taken_at": row.taken_at} for row in intakes],
+        "feedback": [{"id": row.id, "assessment_id": row.assessment_id, "rating": row.rating,
+                      "message": row.message, "created_at": row.created_at} for row in feedback],
+        "family_links": [{"id": row.id, "relative_id": row.relative_id if row.inviter_id == user.id else row.inviter_id,
+                          "relative_relation": row.relative_relation,
+                          "my_shared_conditions": row.inviter_shares_conditions if row.inviter_id == user.id else row.relative_shares_conditions,
+                          "other_shared_conditions": row.relative_shares_conditions if row.inviter_id == user.id else row.inviter_shares_conditions,
+                          "created_at": row.created_at} for row in family_links],
+        "care_links": [{"id": row.id, "role": "patient" if row.patient_id == user.id else "caregiver",
+                        "created_at": row.created_at} for row in care_links],
+        "not_included": ["Ảnh giấy tờ gốc chỉ lưu trên thiết bị và không được tải lên máy chủ.",
+                         "Dữ liệu dùng thử của tài khoản khác không thuộc bản xuất này."],
+    }
+    name = f"genesense-export-{datetime.now(timezone.utc).date().isoformat()}.json"
+    return JSONResponse(content=jsonable_encoder(payload), headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "Cache-Control": "no-store",
+    })
+
+
+@app.delete("/api/account")
+async def delete_account(payload: DeleteAccountRequest, request: Request, user: User = Depends(current_user),
+                         session: AsyncSession = Depends(get_session)):
+    """Permanently remove this account, its data, and all links/invites that refer to it."""
+    user_id = user.id
+    medical_record_ids = list(await session.scalars(select(MedicalRecord.id).where(MedicalRecord.user_id == user_id)))
+    await session.execute(delete(MedicationIntake).where(MedicationIntake.user_id == user_id))
+    await session.execute(delete(Medication).where(Medication.user_id == user_id))
+    await session.execute(delete(Assessment).where(Assessment.user_id == user_id))
+    await session.execute(delete(Feedback).where(Feedback.user_id == user_id))
+    await session.execute(delete(MedicalRecord).where(MedicalRecord.user_id == user_id))
+    await session.execute(delete(Avatar).where(Avatar.user_id == user_id))
+    await session.execute(delete(LoginSession).where(LoginSession.user_id == user_id))
+    await session.execute(delete(CareInvite).where(CareInvite.patient_id == user_id))
+    await session.execute(delete(CareCodeFailure).where(CareCodeFailure.user_id == user_id))
+    await session.execute(delete(FamilyInvite).where(FamilyInvite.inviter_id == user_id))
+    await session.execute(delete(CareLink).where(or_(CareLink.patient_id == user_id, CareLink.caregiver_id == user_id)))
+    await session.execute(delete(FamilyLink).where(or_(FamilyLink.inviter_id == user_id, FamilyLink.relative_id == user_id)))
+    await session.delete(user)
+    await session.commit()
+    request.session.clear()
+    # Let the browser remove only this account's device-local source scans.
+    response = JSONResponse(content={"deleted_medical_record_ids": medical_record_ids}, headers={"Cache-Control": "no-store"})
+    response.delete_cookie(COOKIE_NAME, path="/", secure=settings.secure_cookies, httponly=True, samesite="lax")
+    return response
 
 
 @app.put("/api/profile")
@@ -333,6 +421,37 @@ async def list_medical_records(
     rows = await session.scalars(select(MedicalRecord).where(MedicalRecord.user_id == user.id)
                                  .order_by(MedicalRecord.created_at.desc()).limit(limit))
     return [MedicalRecordResult(id=row.id, created_at=row.created_at, analysis=row.analysis) for row in rows]
+
+
+@app.put("/api/medical-records/{record_id}/genetic-findings/{finding_index}/review",
+         response_model=MedicalRecordResult)
+async def record_genetic_evidence_review(
+    record_id: str,
+    finding_index: int,
+    payload: GeneticEvidenceReviewInput,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Record that the user checked a public/clinical source; this does not verify or classify the finding."""
+    record = await session.scalar(select(MedicalRecord).where(
+        MedicalRecord.id == record_id, MedicalRecord.user_id == user.id
+    ))
+    if not record:
+        raise HTTPException(404, "Không tìm thấy giấy tờ di truyền.")
+    analysis = MedicalDocumentAnalysis.model_validate(record.analysis)
+    if analysis.document_type != "genetic_test_report":
+        raise HTTPException(409, "Giấy tờ này không phải kết quả xét nghiệm di truyền.")
+    if finding_index < 0 or finding_index >= len(analysis.genetic_findings):
+        raise HTTPException(404, "Không tìm thấy mục biến thể trong giấy tờ.")
+    finding = analysis.genetic_findings[finding_index]
+    if not finding.gene and not finding.variant:
+        raise HTTPException(422, "Cần có tên gen hoặc biến thể để ghi nhận đối chiếu.")
+    saved = analysis.model_dump(mode="json")
+    saved["genetic_findings"][finding_index]["evidence_review_on"] = datetime.now(timezone.utc).date().isoformat()
+    saved["genetic_findings"][finding_index]["evidence_review_source"] = payload.source
+    record.analysis = saved
+    await session.commit()
+    return MedicalRecordResult(id=record.id, created_at=record.created_at, analysis=record.analysis)
 
 
 @app.delete("/api/medical-records/{record_id}", status_code=204)

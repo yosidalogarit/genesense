@@ -11,6 +11,7 @@ Condition = Literal["hypertension", "diabetes", "cardiovascular", "stroke", "dys
 Relation = Literal["father", "mother", "sibling", "grandfather", "grandmother", "uncle"]
 FamilyMember = Literal["father", "mother", "sibling", "paternal-grandfather", "paternal-grandmother",
                        "maternal-grandfather", "maternal-grandmother", "maternal-uncle"]
+FamilyHistorySource = Literal["self_reported", "relative_reported", "document_checked", "clinician_reviewed", "unknown"]
 # "device": a GeneSense measuring device (the UNIHIKER K10 sketch) handed the reading over through a link.
 MeasurementSource = Literal["manual", "ble", "simulation", "document", "device"]
 
@@ -36,6 +37,11 @@ class FamilyHistoryInput(BaseModel):
     member_id: str | None = None
     side: Literal["immediate", "paternal", "maternal"] = "immediate"
     knowledge: Literal["unknown", "none", "known"] = "unknown"
+    # Provenance is context only and never changes a score or screening rule.
+    source: FamilyHistorySource = "self_reported"
+    last_confirmed_on: date | None = None
+    # Optional age when the earliest listed condition was first diagnosed; context only, not a score input.
+    age_at_diagnosis: int | None = Field(default=None, ge=1, le=120)
     # How many people this entry stands for; only the "siblings" and "maternal uncles" entries use more than one.
     affected_count: int = Field(default=1, ge=1, le=10)
     # Of the affected siblings, how many are brothers (the rest are sisters). Needed for patterns seen in males.
@@ -45,6 +51,15 @@ class FamilyHistoryInput(BaseModel):
     def consistent_history(self):
         if self.knowledge == "none" and self.conditions:
             raise ValueError("Không thể chọn không có bệnh cùng với một bệnh đã biết.")
+        if self.knowledge == "unknown":
+            self.source = "unknown"
+            self.last_confirmed_on = None
+        elif self.source == "unknown":
+            raise ValueError("Hãy chọn nguồn thông tin hoặc đánh dấu tiền sử chưa rõ.")
+        if self.last_confirmed_on and self.last_confirmed_on > date.today():
+            raise ValueError("Ngày xác nhận tiền sử không thể ở tương lai.")
+        if self.age_at_diagnosis is not None and self.knowledge != "known":
+            raise ValueError("Chỉ ghi tuổi chẩn đoán khi tiền sử bệnh đã biết.")
         if self.affected_brothers > self.affected_count:
             raise ValueError("Số anh em trai mắc bệnh không thể lớn hơn tổng số anh chị em mắc bệnh.")
         return self
@@ -319,10 +334,31 @@ class DocumentFamilyCondition(BaseModel):
     condition: Condition
 
 
+class MedicalGeneticFinding(BaseModel):
+    """Verbatim fields transcribed from a report; this model does not classify variants."""
+    model_config = ConfigDict(extra="forbid")
+
+    gene: str = Field(default="", max_length=60)
+    variant: str = Field(default="", max_length=240)
+    transcript: str = Field(default="", max_length=100)
+    genome_build: str = Field(default="", max_length=40)
+    hgvs_genomic: str = Field(default="", max_length=180)
+    hgvs_coding: str = Field(default="", max_length=180)
+    hgvs_protein: str = Field(default="", max_length=180)
+    rsid: str = Field(default="", max_length=40)
+    zygosity: str = Field(default="", max_length=100)
+    classification: str = Field(default="", max_length=120)
+    condition: str = Field(default="", max_length=200)
+    source_excerpt: str = Field(default="", max_length=300)
+    # A user-recorded source review, not a clinical verification or a GeneSense classification.
+    evidence_review_on: date | None = None
+    evidence_review_source: Literal["clinvar", "clingen", "care_team"] | None = None
+
+
 class MedicalDocumentAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    document_type: Literal["lab_result", "prescription", "discharge_note", "imaging_report", "vaccination", "other"]
+    document_type: Literal["lab_result", "genetic_test_report", "prescription", "discharge_note", "imaging_report", "vaccination", "other"]
     document_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     provider: str = Field(default="", max_length=180)
     title: str = Field(min_length=1, max_length=180)
@@ -333,13 +369,28 @@ class MedicalDocumentAnalysis(BaseModel):
     vitals: DocumentVitals = Field(default_factory=DocumentVitals)
     own_conditions: list[Condition] = Field(default_factory=list, max_length=7)
     family_conditions: list[DocumentFamilyCondition] = Field(default_factory=list, max_length=49)
+    # AI may copy these fields from a genetic report, but must not infer or reclassify them.
+    genetic_findings: list[MedicalGeneticFinding] = Field(default_factory=list, max_length=20)
     medications: list[MedicalMedication] = Field(default_factory=list, max_length=30)
     recommendations: list[str] = Field(default_factory=list, max_length=20)
     warnings: list[str] = Field(default_factory=list, max_length=20)
     confidence: Literal["high", "medium", "low"]
     review_required: bool = True
-    source: Literal["ai"] = "ai"
+    source: Literal["ai", "manual"] = "ai"
     disclaimer: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def genetic_report_requires_review(self):
+        if self.document_type == "genetic_test_report":
+            self.review_required = True
+            if not self.disclaimer:
+                self.disclaimer = "GeneSense chỉ chép nội dung trên phiếu; không xác định nguy cơ, không chẩn đoán và không phân loại lại biến thể."
+        if self.source == "manual":
+            if self.document_type != "genetic_test_report":
+                raise ValueError("Nhập tay chỉ hỗ trợ phiếu xét nghiệm di truyền.")
+            if not self.genetic_findings or any(not (finding.gene.strip() or finding.variant.strip()) for finding in self.genetic_findings):
+                raise ValueError("Mỗi mục nhập tay cần có tên gen hoặc biến thể ghi trên phiếu.")
+        return self
 
 
 class MedicalDocumentAnalyzeResult(BaseModel):
@@ -358,3 +409,11 @@ class MedicalRecordResult(BaseModel):
     id: str
     created_at: datetime
     analysis: MedicalDocumentAnalysis
+
+
+class GeneticEvidenceReviewInput(BaseModel):
+    source: Literal["clinvar", "clingen", "care_team"]
+
+
+class DeleteAccountRequest(BaseModel):
+    confirm_delete: Literal[True]

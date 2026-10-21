@@ -40,6 +40,11 @@ def test_clean_family_flags_nothing():
     assert all(row["advice"] == "" for row in rows.values())
 
 
+def test_each_hereditary_topic_returns_its_own_inheritance_explanation():
+    rows = screen(account(maternal_grandmother=["thalassemia", "g6pd", "ovarian_cancer", "familial_hypercholesterolemia"]))
+    assert {row["pattern"] for row in rows.values()} == {"thalassemia", "x_linked", "brca", "fh"}
+
+
 def test_thalassemia_relative_or_related_parents_asks_doctor():
     assert screen(account(maternal_grandmother=["thalassemia"]))["thalassemia"]["status"] == "ask_doctor"
     related = screen(account(parents_related="yes"))["thalassemia"]
@@ -107,3 +112,15 @@ def test_hereditary_conditions_do_not_move_the_score_or_the_levels():
     assert {row["condition"] for row in overview["conditions"]} == {
         "hypertension", "diabetes", "cardiovascular", "stroke", "dyslipidemia", "breast_cancer", "colorectal_cancer"}
     assert len(overview["hereditary"]) == 4
+
+
+def test_optional_diagnosis_age_is_context_only_and_range_checked():
+    without_age = account(mother=["breast_cancer"])
+    with_age = account(mother={"conditions": ["breast_cancer"], "age_at_diagnosis": 42})
+    assert with_age.family_history[1].age_at_diagnosis == 42
+    plain_payload = AssessmentCreate(profile=without_age.profile, family_history=without_age.family_history, vitals={})
+    age_payload = AssessmentCreate(profile=with_age.profile, family_history=with_age.family_history, vitals={})
+    assert calculate_pgrs(plain_payload) == calculate_pgrs(age_payload)
+    assert risk_overview(without_age, None)["conditions"] == risk_overview(with_age, None)["conditions"]
+    with pytest.raises(ValueError):
+        account(mother={"conditions": ["breast_cancer"], "age_at_diagnosis": 121})

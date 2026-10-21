@@ -27,6 +27,16 @@ export const api = {
   demo: () => request("/api/auth/demo", { method: "POST" }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
   profile: () => request("/api/profile"),
+  exportData: async () => {
+    const response = await fetch("/api/privacy/export", { credentials: "same-origin", cache: "no-store" });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) window.dispatchEvent(new Event("session-expired"));
+      throw new Error(typeof data.detail === "string" ? data.detail : "Chưa tải được bản sao dữ liệu. Vui lòng thử lại.");
+    }
+    return response.blob();
+  },
+  deleteAccount: () => request("/api/account", { method: "DELETE", body: JSON.stringify({ confirm_delete: true }) }),
   // The picture is bytes, not JSON. Resolves to null when the account has none (204).
   avatar: () => fetch("/api/avatar", { credentials: "same-origin", cache: "no-store" }).then(response => response.status === 200 ? response.blob() : null).catch(() => null),
   saveAvatar: blob => request("/api/avatar", { method: "PUT", body: blob, headers: { "Content-Type": "image/jpeg" } }),
@@ -47,11 +57,20 @@ export const api = {
   careAssessment: (patientId, id) => request(`/api/care/patients/${encodeURIComponent(patientId)}/assessments/${encodeURIComponent(id)}`),
   careWeeklyBp: (patientId, timezoneOffset) => request(`/api/care/patients/${encodeURIComponent(patientId)}/weekly-bp?timezone_offset=${timezoneOffset}`),
   careMedications: (patientId, scheduledOn) => request(`/api/care/patients/${encodeURIComponent(patientId)}/medications?scheduled_on=${encodeURIComponent(scheduledOn)}`),
+  familyLinks: () => request("/api/care/family/links"),
+  familyInvite: body => request("/api/care/family/invites", { method: "POST", body: JSON.stringify(body) }),
+  familyInvitePreview: code => request("/api/care/family/invites/preview", { method: "POST", body: JSON.stringify({ code }) }),
+  familyAccept: (code, confirmRelationship) => request("/api/care/family/links", { method: "POST", body: JSON.stringify({ code, confirm_relationship: confirmRelationship }) }),
+  familySharing: (id, shareConditions) => request(`/api/care/family/links/${encodeURIComponent(id)}/sharing`, { method: "PUT", body: JSON.stringify({ share_conditions: shareConditions }) }),
+  familyRemove: id => request(`/api/care/family/links/${encodeURIComponent(id)}`, { method: "DELETE" }),
   deleteAssessment: id => request(`/api/assessments/${encodeURIComponent(id)}`, { method: "DELETE" }),
   feedback: body => request("/api/feedback", { method: "POST", body: JSON.stringify(body) }),
   analyzeMedicalRecord: body => request("/api/medical-records/analyze", { method: "POST", body, timeout: 65000 }),
   saveMedicalRecord: body => request("/api/medical-records", { method: "POST", body: JSON.stringify(body) }),
-  medicalRecords: () => request("/api/medical-records"),
+  medicalRecords: (limit = 30) => request(`/api/medical-records?limit=${limit}`),
+  reviewGeneticFinding: (recordId, index, source) => request(`/api/medical-records/${encodeURIComponent(recordId)}/genetic-findings/${index}/review`, {
+    method: "PUT", body: JSON.stringify({ source })
+  }),
   medications: () => request("/api/medications"),
   medicationIntakes: scheduledOn => request(`/api/medications/intakes?scheduled_on=${encodeURIComponent(scheduledOn)}`),
   setMedicationIntake: (id, slot, body) => request(`/api/medications/${encodeURIComponent(id)}/intakes/${encodeURIComponent(slot)}`, { method: "PUT", body: JSON.stringify(body) }),

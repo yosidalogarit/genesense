@@ -1,11 +1,11 @@
 {
-  "name": "GeneSense AI Core",
+  "name": "GeneSense - Sức khỏe gia đình và di truyền",
   "short_name": "GeneSense",
-  "description": "Theo dõi sinh hiệu và sàng lọc nguy cơ sức khỏe theo ba tầng.",
+  "description": "Theo dõi sức khỏe gia đình, ghi nhận tiền sử bệnh và tìm hiểu bệnh di truyền.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f3f5f8",
-  "theme_color": "#0d2c54",
+  "background_color": "#f2f6fc",
+  "theme_color": "#f2f6fc",
   "lang": "vi",
   "icons": [
     { "src": "/assets/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
