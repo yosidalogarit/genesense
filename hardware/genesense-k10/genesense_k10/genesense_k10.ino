@@ -25,6 +25,7 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <FFat.h>
+#include <SD.h>
 #include <LittleFS.h>
 #include <esp_partition.h>
 #include <time.h>
@@ -51,6 +52,8 @@ const float BEEP_VOLUME   = 0.25;
 #define TEMP_PIN 2                           // DS18B20 temperature probe (KIT0021): port P1 = 2, none = -1
 const char* SETUP_WIFI_NAME = "GeneSense-K10";   // the Wi-Fi the device makes while you set it up
 const char* GENESENSE_URL = "https://genesense-five.vercel.app";   // where "Xem trên GeneSense" leads
+const float HOT_ROOM_C    = 32.0;            // room this warm or warmer: "drink water" reminder (older people overheat easily)
+const float ROOM_TEMP_OFFSET = 0.0;          // the board warms its own sensor a little; if the room reads too warm, e.g. -2.0
 
 const char* TTS_MODELS[] = {"gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts"};
 const char* VOICE        = "Kore";
@@ -60,10 +63,10 @@ const char* SPEECH_STYLE = "Calm, warm and clear, a little slow, speaking kindly
 const uint8_t OXI_ADDR = 0x57;               // I2C address of the SEN0518
 
 // ---------- types (kept above the first function, Arduino needs that) ----------
-enum Screen { S_IDLE, S_PLACE, S_MEASURE, S_RESULT, S_EMERGENCY, S_MENU, S_HISTORY, S_QR, S_WIFISETUP, S_TEMP };
+enum Screen { S_IDLE, S_PLACE, S_MEASURE, S_RESULT, S_EMERGENCY, S_MENU, S_HISTORY, S_QR, S_WIFISETUP, S_TEMP, S_REMIND, S_INFO };
 struct Rec { uint32_t t; uint8_t hr, spo2, flags, pad; };   // one saved measurement (flags: 1 = mock)
 enum Level { SAFE, ATTN, ALERT };
-enum Clip { V_WELCOME, V_PLACE, V_START, V_HOLD, V_DONE, V_CHECK, V_SENT, V_NOPHONE, V_EMERGENCY, V_NOFINGER, V_UNSTABLE, V_TEMP, CLIP_COUNT };
+enum Clip { V_WELCOME, V_PLACE, V_START, V_HOLD, V_DONE, V_CHECK, V_SENT, V_NOPHONE, V_EMERGENCY, V_NOFINGER, V_UNSTABLE, V_TEMP, V_REMIND, V_HOT, CLIP_COUNT };
 enum Sound { SND_BEEP = -1, SND_OK = -2, SND_ALARM = -3, SND_TICK = -4, SND_ERR = -5 };
 
 const char* CLIP_TEXT[CLIP_COUNT] = {
@@ -79,6 +82,8 @@ const char* CLIP_TEXT[CLIP_COUNT] = {
   "Chưa đọc được ngón tay. Hãy đeo lại cảm biến cho vừa khít.",
   "Số đo chưa ổn định. Hãy ngồi yên, thả lỏng tay, rồi đo lại.",
   "Kẹp đầu cảm biến nhiệt vào giữa nách, rồi khép chặt tay lại. Giữ yên khoảng ba phút.",
+  "Đã đến giờ đo. Bấm nút A để bắt đầu đo.",
+  "Phòng đang nóng. Hãy uống thêm nước và ngồi chỗ mát.",
 };
 
 struct ModelState {
@@ -168,9 +173,9 @@ int greenRaw = -1, greenStable = -1;         // green LED button: it latches; ON
 unsigned long greenChangedAt = 0;
 
 // menu + history
-const char* MENU_ITEMS[] = {"Đo nhiệt độ", "Lịch sử đo", "Xem bằng QR", "Cài Wi-Fi", "Xóa lịch sử", "Quay lại"};
-const int MENU_COUNT = 6;
-const int MENU_CLEAR = 4;                    // "Xóa lịch sử"
+const char* MENU_ITEMS[] = {"Đo nhiệt độ", "Lịch sử đo", "Xem bằng QR", "Thông tin máy", "Cài Wi-Fi", "Xóa lịch sử", "Quay lại"};
+const int MENU_COUNT = 7;
+const int MENU_CLEAR = 5;                    // "Xóa lịch sử"
 
 // body temperature (DS18B20 on P1)
 enum TempState { T_NOPROBE, T_WAIT, T_DONE };
@@ -181,6 +186,30 @@ int tempLogN = 0;
 unsigned long tempStart = 0, tempConvAt = 0;
 bool tempConverting = false;
 const int TEMP_MAX_SECONDS = 300;            // give up waiting for a steady value after 5 minutes
+float lastBodyTemp = 0;                      // last finished body temperature, 0 = none since power-on
+String lastBodyTempTime;
+
+// microSD card: a log of every measurement (CSV), and the voice clips
+bool sdOk = false;
+uint32_t sdRows = 0;                         // measurements in the log
+float sdSizeGB = 0, sdFreeGB = 0;            // read once at start: counting free space on a big card is slow
+const char* SD_DIR = "/GeneSense";
+const char* SD_LOG = "/GeneSense/readings.csv";
+
+// the room: built-in AHT20 (temperature, humidity) and LTR303 (light)
+AHT20* aht = nullptr;
+float roomTemp = NAN, roomHum = NAN;
+int roomLux = -1;
+bool roomHot = false;
+unsigned long lastRoomRead = 0, lastHotWarn = 0;
+
+// reminders to measure, set on the device's web page (needs the clock, so Wi-Fi)
+const int REMIND_MAX = 3;
+int remindAt[REMIND_MAX] = {-1, -1, -1};     // minutes after midnight, -1 = off
+int remindDoneDay[REMIND_MAX] = {-1, -1, -1};   // day of the year it already went off
+unsigned long snoozeUntil = 0, lastRemindVoice = 0;
+int remindVoices = 0;
+String remindLabel;
 int menuSel = 0;
 unsigned long clearConfirmUntil = 0;
 const int HIST_MAX = 100;
@@ -206,6 +235,7 @@ uint32_t ledNow[3] = {1, 1, 1};
 
 // Bluetooth
 BLECharacteristic* hrChar = nullptr;
+BLECharacteristic *tempChar = nullptr, *envTempChar = nullptr, *envHumChar = nullptr;
 BLECharacteristic* plxChar = nullptr;
 volatile bool bleConnected = false;
 bool bleWasConnected = false;
@@ -221,6 +251,7 @@ volatile bool voiceReady[CLIP_COUNT];
 bool fsOk = false;                           // somewhere to keep the voice clips (flash, or memory until power-off)
 fs::FS* store = nullptr;                     // the flash file system in use, nullptr = memory only
 const char* storeName = "";
+String storeDir = "";                        // folder of the clips ("" = top of a flash part)
 uint8_t* ramClip[CLIP_COUNT];                // memory-only mode: one clip each (lost at power-off)
 size_t ramLen[CLIP_COUNT];
 volatile bool voiceTaskRunning = false;
@@ -510,7 +541,7 @@ uint32_t fnv(const char* s, uint32_t h) {
 String clipPath(int id) {                    // the name changes when the sentence or voice changes
   char s[24];
   snprintf(s, sizeof(s), "/gs_%08lx.pcm", (unsigned long)fnv(CLIP_TEXT[id], fnv(VOICE, 2166136261u)));
-  return s;
+  return storeDir + s;
 }
 
 void say(int item, bool cut) {               // item: a Clip, or a Sound (negative)
@@ -521,8 +552,18 @@ void say(int item, bool cut) {               // item: a Clip, or a Sound (negati
 
 bool audioIdle() { return audioQ && !audioBusy && uxQueueMessagesWaiting(audioQ) == 0; }
 
+float soundScale() {                         // dark room at night: half as loud
+  if (roomLux < 0 || roomLux >= 3) return 1.0f;
+  time_t now = time(nullptr);
+  if (now < 1700000000) return 0.5f;
+  struct tm t;
+  localtime_r(&now, &t);
+  return t.tm_hour >= 21 || t.tm_hour < 6 ? 0.5f : 1.0f;
+}
+
 void toneOut(float f, int ms, float vol) {   // one sine tone, soft start and end (16 kHz stereo)
   const int R = 16000;
+  vol *= soundScale();
   int n = R * ms / 1000, fade = R / 125;
   int16_t buf[256 * 2];
   float ph = 0, step = 2 * PI * f / R;
@@ -550,7 +591,8 @@ void playSound(int s) {
 
 void playPcm(const int16_t* in, size_t k) {
   int16_t out[512];
-  for (size_t i = 0; i < k; i++) out[2 * i] = out[2 * i + 1] = (int16_t)(in[i] * VOICE_VOLUME);
+  float v = VOICE_VOLUME * soundScale();
+  for (size_t i = 0; i < k; i++) out[2 * i] = out[2 * i + 1] = (int16_t)(in[i] * v);
   size_t w;
   i2s_write(I2S_NUM_0, out, k * 4, &w, portMAX_DELAY);
 }
@@ -636,10 +678,63 @@ bool hasPart(const char* label, esp_partition_subtype_t sub) {
 
 // Voice clips live in the board's flash. The K10's parts differ between board packages and
 // "Partition Scheme" choices, so try each place in turn; with none, keep them in memory.
+// microSD (FAT32). On the K10 the card slot shares a bus (SPI1: SCK 44, MISO 41, MOSI 42, card CS 40)
+// with the board's font chip, not with the screen.
+void startSD() {
+  SPI1.begin(44, 41, 42, -1);                // no change if the K10 library already started it
+  if (!SD.begin(40, SPI1, 20000000, "/sd", 5) || SD.cardType() == CARD_NONE) {
+    Serial.println("microSD: none found (it must be FAT32)");
+    return;
+  }
+  sdOk = true;
+  if (!SD.exists(SD_DIR)) SD.mkdir(SD_DIR);
+  File f = SD.open(SD_LOG, FILE_READ);
+  if (f) {
+    uint8_t buf[256];
+    for (int n; (n = f.read(buf, sizeof(buf))) > 0; )
+      for (int i = 0; i < n; i++) if (buf[i] == '\n') sdRows++;
+    f.close();
+    if (sdRows) sdRows--;                    // the first line is the header
+  } else {
+    File n = SD.open(SD_LOG, FILE_WRITE);
+    if (n) { n.println("time,unix_time,heart_rate,spo2,body_temp_c,room_temp_c,room_humidity,room_light_lux,mock"); n.close(); }
+  }
+  sdSizeGB = SD.cardSize() / 1073741824.0f;
+  sdFreeGB = (SD.totalBytes() - SD.usedBytes()) / 1073741824.0f;
+  Serial.printf("microSD: %.1f GB, %.1f GB free, %u measurements in %s\n", sdSizeGB, sdFreeGB, (unsigned)sdRows, SD_LOG);
+}
+
+String csvNum(float v, int digits) { return isnan(v) ? String("") : String(v, digits); }
+
+// One line per finished measurement: heart rate and SpO2, or a body temperature (0 = not measured).
+void logReading(int hr, int spo2, float bodyT, bool mock) {
+  if (!sdOk) return;
+  File f = SD.open(SD_LOG, FILE_APPEND);
+  if (!f) { Serial.println("microSD: could not write the log"); return; }
+  time_t now = time(nullptr);
+  bool clock = now > 1700000000;
+  char when[20] = "";
+  if (clock) { struct tm t; localtime_r(&now, &t); strftime(when, sizeof(when), "%Y-%m-%d %H:%M", &t); }
+  String line = String(when) + "," + (clock ? String((unsigned long)now) : String("")) + "," +
+                (hr ? String(hr) : String("")) + "," + (spo2 ? String(spo2) : String("")) + "," +
+                (bodyT > 0 ? String(bodyT, 1) : String("")) + "," + csvNum(roomTemp, 1) + "," + csvNum(roomHum, 0) + "," +
+                (roomLux >= 0 ? String(roomLux) : String("")) + "," + (mock ? "1" : "0");
+  f.println(line);
+  f.close();
+  sdRows++;
+}
+
 void startStorage() {
   listPartitions();
+  if (sdOk) {                                // a card: 32 GB is plenty, and it survives every upload
+    storeDir = String(SD_DIR) + "/voice";
+    if (!SD.exists(storeDir)) SD.mkdir(storeDir);
+    store = (fs::FS*)&SD;
+    storeName = "microSD";
+  }
   struct { const char* label; bool fat; } tries[] = {{"voice_data", true}, {"ffat", true}, {"model", false}, {"spiffs", false}};
   for (auto& t : tries) {
+    if (store) break;
     if (!hasPart(t.label, t.fat ? ESP_PARTITION_SUBTYPE_DATA_FAT : ESP_PARTITION_SUBTYPE_DATA_SPIFFS)) continue;
     Serial.printf("Voice storage: trying \"%s\" (first time it is formatted, this can take a minute)\n", t.label);
     if (t.fat ? FFat.begin(true, "/ffat", 3, t.label) : LittleFS.begin(true, "/littlefs", 3, t.label)) {
@@ -656,11 +751,11 @@ void startStorage() {
   }
   for (int i = 0; i < CLIP_COUNT; i++) voiceReady[i] = store->exists(clipPath(i));
   // delete clips of sentences that were changed
-  File root = store->open("/");
+  File root = store->open(storeDir.length() ? storeDir : String("/"));
   std::vector<String> old;
   for (File f = root.openNextFile(); f; f = root.openNextFile()) {
-    String name = String("/") + f.name();
-    if (name.startsWith("/gs_")) {
+    String name = storeDir + "/" + f.name();
+    if (String(f.name()).startsWith("gs_")) {
       bool used = false;
       for (int i = 0; i < CLIP_COUNT; i++) if (name == clipPath(i)) used = true;
       if (!used) old.push_back(name);
@@ -669,8 +764,8 @@ void startStorage() {
   }
   root.close();
   for (auto& n : old) store->remove(n);
-  size_t total = store == (fs::FS*)&FFat ? FFat.totalBytes() : LittleFS.totalBytes();
-  size_t used = store == (fs::FS*)&FFat ? FFat.usedBytes() : LittleFS.usedBytes();
+  uint64_t total = store == (fs::FS*)&SD ? SD.totalBytes() : store == (fs::FS*)&FFat ? FFat.totalBytes() : LittleFS.totalBytes();
+  uint64_t used = store == (fs::FS*)&SD ? SD.usedBytes() : store == (fs::FS*)&FFat ? FFat.usedBytes() : LittleFS.usedBytes();
   Serial.printf("Voice storage: \"%s\", clips saved %d/%d, free %u KB\n", storeName, voiceCount(), voiceNeeded(),
                 (unsigned)((total - used) / 1024));
 }
@@ -828,7 +923,7 @@ bool saveClip(int id, uint8_t* a, size_t n) {
     Serial.printf("Voice %d kept in memory: %.1f s\n", id, (last - first) / (float)rate);
     return true;
   }
-  String tmp = "/tmp.pcm";
+  String tmp = storeDir + "/tmp.pcm";
   File f = store->open(tmp, FILE_WRITE);
   if (!f) return false;
   bool ok = f.write((const uint8_t*)"GSV1", 4) == 4 && f.write((const uint8_t*)&rate, 4) == 4 &&
@@ -962,6 +1057,18 @@ void startBluetooth() {
   features->setValue(none, 2);
   plx->start();
 
+  BLEService* ht = server->createService(BLEUUID((uint16_t)0x1809));   // Health Thermometer: body temperature
+  tempChar = ht->createCharacteristic(BLEUUID((uint16_t)0x2A1C), BLECharacteristic::PROPERTY_INDICATE);
+  tempChar->addDescriptor(new BLE2902());
+  ht->start();
+
+  BLEService* env = server->createService(BLEUUID((uint16_t)0x181A));  // Environmental Sensing: the room
+  envTempChar = env->createCharacteristic(BLEUUID((uint16_t)0x2A6E), BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  envTempChar->addDescriptor(new BLE2902());
+  envHumChar = env->createCharacteristic(BLEUUID((uint16_t)0x2A6F), BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  envHumChar->addDescriptor(new BLE2902());
+  env->start();
+
   BLEService* info = server->createService(BLEUUID((uint16_t)0x180A));
   info->createCharacteristic(BLEUUID((uint16_t)0x2A29), BLECharacteristic::PROPERTY_READ)->setValue("GeneSense (thu nghiem)");
   info->createCharacteristic(BLEUUID((uint16_t)0x2A24), BLECharacteristic::PROPERTY_READ)->setValue(USE_SEN0518 ? "K10 + SEN0518" : "K10 gia lap");
@@ -970,6 +1077,7 @@ void startBluetooth() {
   BLEAdvertising* adv = BLEDevice::getAdvertising();
   adv->addServiceUUID(BLEUUID((uint16_t)0x180D));
   adv->addServiceUUID(BLEUUID((uint16_t)0x1822));
+  adv->addServiceUUID(BLEUUID((uint16_t)0x1809));
   adv->setScanResponse(true);
   BLEDevice::startAdvertising();
   Serial.printf("Bluetooth ready as \"%s\"\n", DEVICE_NAME);
@@ -983,6 +1091,22 @@ void notifyValues(int hr, int spo2) {
   uint8_t plxPacket[5] = {0x00, (uint8_t)(s & 0xFF), (uint8_t)(s >> 8), (uint8_t)(p & 0xFF), (uint8_t)(p >> 8)};
   plxChar->setValue(plxPacket, 5);
   plxChar->notify();
+}
+
+void notifyBodyTemp(float c) {               // IEEE-11073 FLOAT: 24-bit value, exponent -1, in °C
+  int32_t m = (int32_t)roundf(c * 10);
+  uint8_t p[5] = {0x00, (uint8_t)(m & 0xFF), (uint8_t)((m >> 8) & 0xFF), (uint8_t)((m >> 16) & 0xFF), 0xFF};
+  tempChar->setValue(p, 5);
+  if (bleConnected) tempChar->indicate();
+}
+
+void updateRoomBle() {                       // 0.01 °C and 0.01 % steps
+  if (isnan(roomTemp)) return;
+  int16_t t = (int16_t)roundf(roomTemp * 100);
+  uint16_t h = (uint16_t)roundf(constrain(roomHum, 0.0f, 100.0f) * 100);
+  envTempChar->setValue((uint8_t*)&t, 2);
+  envHumChar->setValue((uint8_t*)&h, 2);
+  if (bleConnected) { envTempChar->notify(); envHumChar->notify(); }
 }
 
 // The app averages the last 5 values it got, so the same final value is sent 5 times:
@@ -1006,30 +1130,93 @@ bool sendResult(bool quiet) {
 // =====================================================================
 const char PAGE[] PROGMEM = R"html(<!doctype html><html lang="vi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>GeneSense K10</title>
-<style>body{font-family:system-ui,sans-serif;background:#0a1226;color:#fff;margin:0;padding:16px;font-size:20px}
-.card{background:#1c2e54;border-radius:14px;padding:16px;margin:12px 0}.big{font-size:56px;font-weight:700}
-.tag{background:#ffd400;color:#000;padding:6px 10px;border-radius:8px;font-weight:700;display:inline-block}
-.alert{background:#e11e23}.muted{color:#a5afc3;font-size:16px}
-.gs{display:block;text-align:center;background:#28c85a;color:#000;font-weight:700;padding:16px;border-radius:14px;text-decoration:none;font-size:22px}
-td a{color:#28c85a}</style></head><body>
-<span class="tag">THIẾT BỊ THỬ NGHIỆM</span><h1>GeneSense K10</h1><div id="out">Đang tải...</div>
-<h2>Lịch sử đo</h2><table style="width:100%;font-size:18px"><thead><tr><th align=left>Lúc</th><th align=left>Nhịp</th><th align=left>SpO2</th><th></th></tr></thead><tbody id="hist"></tbody></table>
-<p class="muted">Không phải thiết bị y tế, không thay thế chẩn đoán của bác sĩ. Khi có dấu hiệu cấp cứu, gọi 115.</p>
+<style>body{font-family:"Be Vietnam Pro",system-ui,sans-serif;background:#f4f8ff;color:#10264b;margin:0;padding:16px;font-size:18px;line-height:1.5}
+main{max-width:560px;margin:0 auto}h1{font-size:26px;color:#0d2c69;margin:8px 0 4px}h2{font-size:21px;margin:26px 0 8px}
+.strip{display:inline-block;background:#fcf1d6;color:#7a4d00;font-weight:700;font-size:15px;padding:4px 12px;border-radius:8px}
+.card{background:#fff;border:1px solid #dbe5f1;border-radius:16px;padding:16px;margin:12px 0}
+.big{font-size:44px;font-weight:700;line-height:1.15}.big small{font-size:17px;color:#52627a;font-weight:500;margin-left:6px}
+.tag{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:4px;font-weight:600;font-size:16px}
+.safe{background:#e5f2ea;color:#17663a}.attention{background:#fcf1d6;color:#7a4d00}.alert{background:#fbe9e8;color:#a8201a}
+.mk{width:12px;height:12px;background:currentColor;border-radius:50%}.attention .mk{border-radius:0;clip-path:polygon(50% 0,100% 100%,0 100%)}
+.alert .mk{border-radius:0;clip-path:polygon(30% 0,70% 0,100% 30%,100% 70%,70% 100%,30% 100%,0 70%,0 30%)}
+.emergency{background:#b3261e;color:#fff;border-radius:16px;padding:16px;font-weight:600;margin:12px 0}
+.btn{display:block;text-align:center;background:#0756ce;color:#fff;font-weight:700;padding:14px;border-radius:12px;text-decoration:none;margin:12px 0}
+.btn.outline{background:#fff;color:#0756ce;border:1px solid #b7c7dc}.muted{color:#52627a;font-size:16px}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px 4px;border-top:1px solid #dbe5f1}a{color:#0756ce}</style></head>
+<body><main><span class="strip">THIẾT BỊ THỬ NGHIỆM</span><h1>GeneSense K10</h1><div id="out">Đang tải...</div>
+<h2>Phòng</h2><div class="card" id="room">Đang đọc...</div>
+<h2>Nhắc đo</h2><div class="card"><div id="rem"></div><a class="btn outline" href="/settings">Đặt giờ nhắc</a></div>
+<h2>Lịch sử đo</h2><a class="btn outline" id="csv" href="/readings.csv" hidden>Tải bảng số đo (CSV)</a>
+<table><thead><tr><th>Lúc</th><th>Nhịp</th><th>SpO2</th><th></th></tr></thead><tbody id="hist"></tbody></table>
+<p class="muted">Không phải thiết bị y tế, không thay thế chẩn đoán của bác sĩ. Khi có dấu hiệu cấp cứu, gọi 115.</p></main>
 <script>
-async function load(){try{const r=await fetch('/api/latest');const d=await r.json();const o=document.getElementById('out');
-if(!d.have){o.textContent='Chưa có lần đo nào. Bấm nút A trên máy để đo.';return}
-o.innerHTML='';const add=(t,v,u,w)=>{const c=document.createElement('div');c.className='card';
-c.innerHTML='<div></div><div class="big"></div><div></div>';c.children[0].textContent=t;c.children[1].textContent=v+' '+u;c.children[2].textContent=w;o.appendChild(c)};
-if(d.emergency){const e=document.createElement('div');e.className='card alert';e.textContent='Chỉ số ở mức nguy hiểm. Đo lại ngay; nếu khó thở, gọi cấp cứu 115.';o.appendChild(e)}
-add('Nhịp tim',d.heart_rate,'lần/phút',d.heart_rate_status);add('Oxy trong máu (SpO2)',d.spo2,'%',d.spo2_status);
-const m=document.createElement('p');m.className='muted';m.textContent=(d.mock?'Số liệu giả lập. ':'')+(d.time?'Đo lúc '+d.time:'');o.appendChild(m);
-if(d.link){const a=document.createElement('a');a.className='gs';a.href=d.link;a.textContent='Xem trên GeneSense';o.appendChild(a)}
-else{const n=document.createElement('p');n.className='muted';n.textContent=d.mock?'Số liệu giả lập, không gửi sang GeneSense.':'Máy chưa có giờ và kết quả đã cũ, hãy đo lại để gửi sang GeneSense.';o.appendChild(n)}}catch(e){}
-try{const h=await (await fetch('/api/history')).json();const t=document.getElementById('hist');t.innerHTML='';
-h.forEach(r=>{const tr=document.createElement('tr');[r.t||'?',r.hr,r.spo2+'%'].forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.appendChild(td)});
-const td=document.createElement('td');if(r.link){const a=document.createElement('a');a.href=r.link;a.textContent='Lưu vào GeneSense';td.appendChild(a)}else td.textContent=r.mock?'giả lập':'';tr.appendChild(td);t.appendChild(tr)})}catch(e){}}
-load();setInterval(load,3000);
+const $=id=>document.getElementById(id);
+function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function card(label,value,unit,level,word){const c=el('div','card');c.appendChild(el('div','muted',label));
+const b=el('div','big',value);b.appendChild(el('small','',unit));c.appendChild(b);
+if(word){const t=el('span','tag '+level);t.appendChild(el('span','mk'));t.appendChild(document.createTextNode(word));c.appendChild(t)}return c}
+async function load(){try{const d=await (await fetch('/api/latest')).json();const o=$('out');o.innerHTML='';
+if(d.emergency)o.appendChild(el('div','emergency','Chỉ số ở mức nguy hiểm. Đo lại ngay; nếu khó thở, gọi cấp cứu 115.'));
+if(d.have){o.appendChild(card('Nhịp tim',d.heart_rate,'lần/phút',d.heart_rate_level,d.heart_rate_status));
+o.appendChild(card('Oxy trong máu (SpO2)',d.spo2,'%',d.spo2_level,d.spo2_status));
+o.appendChild(el('p','muted',(d.mock?'Số liệu giả lập. ':'')+(d.time?'Đo lúc '+d.time:'')));
+if(d.link){const a=el('a','btn','Xem trên GeneSense');a.href=d.link;o.appendChild(a)}}
+else o.appendChild(el('p','','Chưa có lần đo nào. Bấm nút A trên máy để đo.'));
+if(d.body_temp)o.appendChild(card('Nhiệt độ cơ thể (đo ở nách)'+(d.body_temp_time?', lúc '+d.body_temp_time:''),String(d.body_temp).replace('.',','),'°C',d.body_temp_level,d.body_temp_status));
+const r=$('room');r.innerHTML='';const rm=d.room||{};
+if(rm.temp!=null){r.appendChild(card('Nhiệt độ trong phòng',String(rm.temp).replace('.',',')+' °C','độ ẩm '+rm.humidity+'%',rm.hot?'attention':'safe',rm.hot?'Phòng nóng, hãy uống thêm nước':'Dễ chịu'));r.lastChild.className=''}
+else r.textContent='Đang đọc...';if(rm.lux!=null&&rm.lux>=0)r.appendChild(el('p','muted','Ánh sáng: '+rm.lux+' lux'));
+$('rem').textContent=d.reminders&&d.reminders.length?'Máy nhắc đo lúc: '+d.reminders.join(', '):'Chưa đặt giờ nhắc.';
+$('csv').hidden=!d.sd;if(d.sd)$('csv').textContent='Tải bảng số đo (CSV, '+d.sd_rows+' lần đo)'}catch(e){}
+try{const h=await (await fetch('/api/history')).json();const t=$('hist');t.innerHTML='';
+h.forEach(r=>{const tr=el('tr');[r.t||'?',r.hr,r.spo2+'%'].forEach(v=>tr.appendChild(el('td','',v)));
+const td=el('td');if(r.link){const a=el('a','','Lưu vào GeneSense');a.href=r.link;td.appendChild(a)}else td.textContent=r.mock?'giả lập':'';tr.appendChild(td);t.appendChild(tr)})}catch(e){}}
+load();setInterval(load,5000);
 </script></body></html>)html";
+
+const char SETTINGS_TOP[] PROGMEM = R"html(<!doctype html><html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Giờ nhắc đo</title>
+<style>body{font-family:"Be Vietnam Pro",system-ui,sans-serif;background:#f4f8ff;color:#10264b;margin:0;padding:16px;font-size:20px;line-height:1.5}
+main{max-width:560px;margin:0 auto}h1{font-size:26px;color:#0d2c69}label{display:block;margin:16px 0 6px;font-weight:600}
+input{width:100%;min-height:52px;font-size:20px;padding:10px 14px;border-radius:12px;border:1px solid #b7c7dc;background:#fff;color:#10264b;box-sizing:border-box}
+button{width:100%;min-height:56px;margin-top:22px;font-size:22px;border:0;border-radius:12px;background:#0756ce;color:#fff;font-weight:700}
+.muted{color:#52627a;font-size:17px}a{color:#0756ce}</style></head><body><main><h1>Giờ nhắc đo</h1>
+<p class="muted">Đến giờ, máy đo nói "Đã đến giờ đo" và nháy đèn xanh. Để trống ô nào thì bỏ giờ đó. Máy cần Wi-Fi để biết giờ.</p>
+<form method="post" action="/settings">)html";
+
+void handleSettings() {
+  if (web.method() == HTTP_POST) {
+    for (int i = 0; i < REMIND_MAX; i++) {
+      remindAt[i] = parseHhmm(web.arg("r" + String(i)));
+      prefs.putShort(("rem" + String(i)).c_str(), remindAt[i]);
+      remindDoneDay[i] = -1;
+    }
+    Serial.println("Reminders: " + remindersText());
+    dirty = true;
+    web.sendHeader("Location", "/");
+    web.send(303, "text/plain", "");
+    return;
+  }
+  String page = FPSTR(SETTINGS_TOP);
+  const char* names[REMIND_MAX] = {"Buổi sáng", "Buổi trưa", "Buổi tối"};
+  for (int i = 0; i < REMIND_MAX; i++)
+    page += "<label>" + String(names[i]) + "</label><input type=\"time\" name=\"r" + String(i) + "\" value=\"" +
+            (remindAt[i] >= 0 ? hhmm(remindAt[i]) : String("")) + "\">";
+  page += "<button type=\"submit\">Lưu</button></form><p><a href=\"/\">Quay lại</a></p></main></body></html>";
+  web.send(200, "text/html; charset=utf-8", page);
+}
+
+void handleCsv() {
+  if (!sdOk) { web.send(404, "text/plain", "No microSD card"); return; }
+  File f = SD.open(SD_LOG, FILE_READ);
+  if (!f) { web.send(404, "text/plain", "No log yet"); return; }
+  web.sendHeader("Content-Disposition", "attachment; filename=genesense-k10-readings.csv");
+  web.streamFile(f, "text/csv");
+  f.close();
+}
+
+const char* levelCss(Level l) { return l == ALERT ? "alert" : l == ATTN ? "attention" : "safe"; }
+String jsonNum(float v, int digits) { return isnan(v) ? String("null") : String(v, digits); }
 
 void handleLatest() {
   String j = "{\"have\":" + String(haveResult ? "true" : "false");
@@ -1037,10 +1224,21 @@ void handleLatest() {
     Level lh = levelHR(resultHR), ls = levelSpO2(resultSpO2);
     j += ",\"heart_rate\":" + String(resultHR) + ",\"spo2\":" + String(resultSpO2) +
          ",\"heart_rate_status\":\"" + levelWordHR(lh) + "\",\"spo2_status\":\"" + levelWordSpO2(ls) + "\"" +
+         ",\"heart_rate_level\":\"" + levelCss(lh) + "\",\"spo2_level\":\"" + levelCss(ls) + "\"" +
          ",\"emergency\":" + ((lh == ALERT || ls == ALERT) ? "true" : "false") +
          ",\"mock\":" + (resultMock ? "true" : "false") + ",\"time\":\"" + resultTime + "\"" +
          ",\"link\":\"" + latestLink() + "\"";
   }
+  if (lastBodyTemp > 0)
+    j += ",\"body_temp\":" + String(lastBodyTemp, 1) + ",\"body_temp_status\":\"" + levelWordTemp(lastBodyTemp) +
+         "\",\"body_temp_level\":\"" + levelCss(levelTemp(lastBodyTemp)) + "\",\"body_temp_time\":\"" + lastBodyTempTime + "\"";
+  j += ",\"room\":{\"temp\":" + jsonNum(roomTemp, 1) + ",\"humidity\":" + jsonNum(roomHum, 0) + ",\"lux\":" + String(roomLux) +
+       ",\"hot\":" + (roomHot ? "true" : "false") + "}";
+  j += ",\"reminders\":[";
+  bool first = true;
+  for (int i = 0; i < REMIND_MAX; i++)
+    if (remindAt[i] >= 0) { j += String(first ? "" : ",") + "\"" + hhmm(remindAt[i]) + "\""; first = false; }
+  j += "],\"sd\":" + String(sdOk ? "true" : "false") + ",\"sd_rows\":" + String(sdRows);
   j += ",\"device\":\"" + String(DEVICE_NAME) + "\"}";
   web.send(200, "application/json", j);
 }
@@ -1138,6 +1336,8 @@ void startWeb() {
   web.on("/api/latest", handleLatest);
   web.on("/api/history", handleHistory);
   web.on("/save", HTTP_POST, handleSave);
+  web.on("/settings", handleSettings);
+  web.on("/readings.csv", handleCsv);
   web.onNotFound(handleNotFound);
   web.begin();
   webStarted = true;
@@ -1589,6 +1789,23 @@ void statusRow(int y, int h, const char* label, const String& value, bool last, 
   if (!last) cv->drawFastHLine(20, y + h, W - 40, C_LINE);
 }
 
+String voiceStatus(bool& warn) {
+  int need = voiceNeeded(), have = min(voiceCount(), need);
+  warn = have < need && (!fsOk || !geminiKey.length() || voiceProblem == 401);
+  return have >= need ? (store ? "Sẵn sàng" : "Sẵn sàng (tạm)")
+       : !fsOk ? "Không có chỗ lưu"
+       : !geminiKey.length() ? "Chưa có khóa"
+       : voiceProblem == 401 ? "Khóa sai"
+       : voiceTaskRunning && !voiceProblem ? "Đang tạo " + String(have) + "/" + String(need)
+       : voiceProblem == 429 ? "Hết lượt, thử lại sau"
+       : voiceProblem == -1 ? "Lỗi mạng, thử lại sau"
+       : voiceProblem == -2 ? "Google chưa trả lời"
+       : voiceProblem == -3 ? "Âm thanh hỏng, thử lại"
+       : voiceProblem ? "Lỗi " + String(voiceProblem) + ", thử lại sau"
+       : WiFi.status() != WL_CONNECTED ? "Chờ Wi-Fi"
+       : have ? "Có " + String(have) + "/" + String(need) : "Chờ tạo";
+}
+
 void drawIdle() {
   screenStart();
   card(8, 48, W - 16, 92, 16, C_SURF, C_LINE);
@@ -1600,22 +1817,11 @@ void drawIdle() {
     heart(W / 2, 124, 6 + beat, C_BLUE);
   }
 
-  int need = voiceNeeded(), have = min(voiceCount(), need);
-  bool vWarn = have < need && (!fsOk || !geminiKey.length() || voiceProblem == 401);
-  String v = have >= need ? (store ? "Sẵn sàng" : "Sẵn sàng (tạm)")
-           : !fsOk ? "Không có chỗ lưu"
-           : !geminiKey.length() ? "Chưa có khóa"
-           : voiceProblem == 401 ? "Khóa sai"
-           : voiceTaskRunning && !voiceProblem ? "Đang tạo " + String(have) + "/" + String(need)
-           : voiceProblem == 429 ? "Hết lượt, thử lại sau"
-           : voiceProblem == -1 ? "Lỗi mạng, thử lại sau"
-           : voiceProblem == -2 ? "Google chưa trả lời"
-           : voiceProblem == -3 ? "Âm thanh hỏng, thử lại"
-           : voiceProblem ? "Lỗi " + String(voiceProblem) + ", thử lại sau"
-           : WiFi.status() != WL_CONNECTED ? "Chờ Wi-Fi"
-           : have ? "Có " + String(have) + "/" + String(need) : "Chờ tạo";
-  int rows = 3 + (USE_SEN0518 ? 1 : 0) + (mockMode() ? 1 : 0);
-  int y = 144, h = rows > 4 ? 19 : 24;
+  bool vWarn;
+  String v = voiceStatus(vWarn);
+  bool voiceRow = voiceCount() < voiceNeeded();
+  int rows = 3 + (USE_SEN0518 ? 1 : 0) + (voiceRow ? 1 : 0) + (mockMode() ? 1 : 0);
+  int y = 144, h = rows <= 4 ? 24 : rows == 5 ? 20 : 17;
   card(8, y, W - 16, rows * h + 8, 16, C_SURF, C_LINE);
   y += 4;
   int i = 0;
@@ -1629,8 +1835,9 @@ void drawIdle() {
   y += h;
   statusRow(y, h, "Wi-Fi", !wifiSsid.length() ? "Chưa cài (Menu)" : WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Đang nối...", ++i == rows);
   y += h;
-  statusRow(y, h, "Giọng nói", v, ++i == rows, vWarn);
+  statusRow(y, h, "Phòng", roomText(), ++i == rows, roomHot);
   y += h;
+  if (voiceRow) { statusRow(y, h, "Giọng nói", v, ++i == rows, vWarn); y += h; }
   if (mockMode()) statusRow(y, h, "Thử cấp cứu", demoLow ? "BẬT · A+B tắt" : "A+B để bật", ++i == rows, demoLow);
   buttonHint(true, "Bắt đầu", BTN_MAIN);
   buttonHint(false, "Menu");
@@ -1987,6 +2194,54 @@ void drawTemp() {
   bottomBanner();
 }
 
+void drawRemind() {
+  screenStart();
+  card(8, 48, W - 16, 150, 16, C_SURF, C_LINE);
+  disc(W / 2, 98, 32, C_BLUE_SOFT);          // a clock
+  ring(W / 2, 98, 20, 24, 1, C_BLUE);
+  line(W / 2, 98, W / 2, 86, 3.5f, C_BLUE);
+  line(W / 2, 98, W / 2 + 9, 103, 3.5f, C_BLUE);
+  textC(W / 2, 162, "Đến giờ đo", C_INK, GS_BIG);
+  textC(W / 2, 186, "Nhắc lúc " + remindLabel, C_INK2, GS_BODY);
+  wrapC(222, "Bấm A để đo nhịp tim và oxy trong máu", C_INK2, GS_SMALL);
+  buttonHint(true, "Đo ngay", BTN_MAIN);
+  buttonHint(false, "Để sau");
+  bottomBanner();
+}
+
+String voiceStatus(bool& warn);
+
+void drawInfo() {
+  screenStart();
+  title("Thông tin máy", 68);
+  const int RH = 22, rows = 7;
+  int y = 78;
+  card(8, y, W - 16, rows * RH + 8, 16, C_SURF, C_LINE);
+  y += 4;
+  String sd = sdOk ? vnNum(sdSizeGB, 0) + " GB, trống " + vnNum(sdFreeGB, 0)
+                   : String("Không có thẻ");
+  statusRow(y, RH, "Thẻ nhớ", sd, false);
+  y += RH;
+  statusRow(y, RH, "Đã lưu", sdOk ? String(sdRows) + " lần (thẻ)" : String(histCount) + " lần (máy)", false);
+  y += RH;
+  statusRow(y, RH, "Phòng", roomText(), false, roomHot);
+  y += RH;
+  statusRow(y, RH, "Ánh sáng", roomLux < 0 ? String("–") : String(roomLux) + " lux" + (soundScale() < 1 ? " · đêm" : ""), false);
+  y += RH;
+  bool vWarn;
+  String v = voiceStatus(vWarn);
+  statusRow(y, RH, "Giọng nói", v, false, vWarn);
+  y += RH;
+  String r = remindersText();
+  statusRow(y, RH, "Nhắc đo", r.length() ? r : String("Chưa đặt"), false);
+  y += RH;
+  bool up = WiFi.status() == WL_CONNECTED;
+  statusRow(y, RH, "Web", up ? WiFi.localIP().toString() : String("Chưa có Wi-Fi"), true);
+  textC(W / 2, BTN_Y - 4, up ? "Đặt giờ nhắc trên trang web" : "Cài Wi-Fi để đặt giờ nhắc", C_INK2, GS_SMALL);
+  buttonHint(false, "Về");
+  bottomBanner();
+}
+
 void drawBoot() {
   cv->fillScreen(C_BG);
   logo(W / 2 - 32, 92, 64);
@@ -2006,8 +2261,112 @@ void render() {
     case S_QR: drawQRScreen(); break;
     case S_WIFISETUP: drawWifiSetup(); break;
     case S_TEMP: drawTemp(); break;
+    case S_REMIND: drawRemind(); break;
+    case S_INFO: drawInfo(); break;
   }
   screen.pushImage(0, 0, W, H, cv->getBuffer());
+}
+
+// =====================================================================
+// The room: built-in temperature, humidity and light
+// =====================================================================
+String vnNum(float v, int digits) {          // Vietnamese decimal comma: 31,2
+  String s = String(v, digits);
+  s.replace(".", ",");
+  return s;
+}
+
+String roomText() { return isnan(roomTemp) ? String("Đang đọc...") : vnNum(roomTemp, 1) + " °C · " + vnNum(roomHum, 0) + "%"; }
+
+void roomLoop() {
+  if (!aht || (lastRoomRead && millis() - lastRoomRead < 5000)) return;
+  lastRoomRead = millis();
+  float t = aht->getData(AHT20::eAHT20TempC), h = aht->getData(AHT20::eAHT20HumiRH);
+  if (t > -20 && t < 70 && h > 0 && h <= 100) {   // both 0 = not measured yet
+    roomTemp = t + ROOM_TEMP_OFFSET;
+    roomHum = h;
+  }
+  roomLux = k10.readALS();
+  bool hot = !isnan(roomTemp) && (roomHot ? roomTemp >= HOT_ROOM_C - 0.5f : roomTemp >= HOT_ROOM_C);
+  if (hot != roomHot) { roomHot = hot; dirty = true; }
+  if (roomHot && screenNow == S_IDLE && audioIdle() && (!lastHotWarn || millis() - lastHotWarn > 2 * 3600000UL)) {
+    lastHotWarn = millis();                  // at most every 2 hours
+    showToast("Phòng nóng: uống thêm nước", C_AMBER);
+    say(V_HOT, false);
+  }
+  static unsigned long lastBle = 0;
+  if (!lastBle || millis() - lastBle > 30000) { lastBle = millis(); updateRoomBle(); }
+}
+
+// =====================================================================
+// Reminders to measure (times set on the device's web page)
+// =====================================================================
+String hhmm(int m) {
+  char s[6];
+  snprintf(s, sizeof(s), "%02d:%02d", m / 60, m % 60);
+  return s;
+}
+
+int parseHhmm(String v) {                    // "08:30" -> 510, anything else -> -1
+  v.trim();
+  int c = v.indexOf(':');
+  if (c < 1) return -1;
+  int h = v.substring(0, c).toInt(), m = v.substring(c + 1).toInt();
+  return h >= 0 && h < 24 && m >= 0 && m < 60 ? h * 60 + m : -1;
+}
+
+void loadReminders() {
+  for (int i = 0; i < REMIND_MAX; i++) remindAt[i] = prefs.getShort(("rem" + String(i)).c_str(), -1);
+}
+
+String remindersText() {
+  String t;
+  for (int i = 0; i < REMIND_MAX; i++)
+    if (remindAt[i] >= 0) t += (t.length() ? " · " : "") + hhmm(remindAt[i]);
+  return t;
+}
+
+void startReminder(const String& label) {
+  remindLabel = label;
+  remindVoices = 1;
+  lastRemindVoice = millis();
+  goTo(S_REMIND);
+  say(V_REMIND, true);
+  Serial.println("Reminder: time to measure (" + label + ")");
+}
+
+void reminderLoop() {
+  unsigned long now = millis();
+  if (screenNow == S_REMIND) {
+    if (now - lastRemindVoice > 60000 && remindVoices < 3 && audioIdle()) {   // say it again, 3 times at most
+      lastRemindVoice = now;
+      remindVoices++;
+      say(V_REMIND, false);
+    }
+    if (now - stateSince > 5 * 60000UL) goTo(S_IDLE);   // nobody came: stop asking
+    return;
+  }
+  static unsigned long lastCheck = 0;
+  if (now - lastCheck < 5000) return;
+  lastCheck = now;
+  bool calm = screenNow == S_IDLE || screenNow == S_MENU || screenNow == S_HISTORY || screenNow == S_QR || screenNow == S_INFO;
+  if (snoozeUntil && (long)(now - snoozeUntil) >= 0) {
+    if (calm) { snoozeUntil = 0; startReminder(remindLabel); }
+    return;
+  }
+  time_t t = time(nullptr);
+  if (t < 1700000000) return;                // no clock yet
+  struct tm tm;
+  localtime_r(&t, &tm);
+  int mins = tm.tm_hour * 60 + tm.tm_min;
+  for (int i = 0; i < REMIND_MAX; i++) {
+    if (remindAt[i] < 0 || remindDoneDay[i] == tm.tm_yday || mins < remindAt[i] || mins >= remindAt[i] + 30) continue;
+    if (!calm) return;                       // measuring or setting up: remind when that is finished
+    remindDoneDay[i] = tm.tm_yday;
+    if (haveResult && now - resultAtMs < 60 * 60000UL) return;   // measured in the last hour already
+    startReminder(hhmm(remindAt[i]));
+    return;
+  }
 }
 
 // =====================================================================
@@ -2124,6 +2483,10 @@ void tempLoop() {
   if (steady || secs >= TEMP_MAX_SECONDS) {
     tempResult = roundf(c * 10) / 10;
     tempState = T_DONE;
+    lastBodyTemp = tempResult;
+    lastBodyTempTime = dateTimeText();
+    logReading(0, 0, tempResult, false);
+    notifyBodyTemp(tempResult);
     say(levelTemp(tempResult) == SAFE ? SND_OK : SND_ERR, true);
   }
 }
@@ -2302,6 +2665,7 @@ void finishMeasurement() {
   { time_t now = time(nullptr); resultEpoch = now > 1700000000 ? (uint32_t)now : 0; }
   resultAtMs = millis();
   addHistory(resultHR, resultSpO2, resultMock);
+  logReading(resultHR, resultSpO2, 0, resultMock);
   Level lh = levelHR(resultHR), ls = levelSpO2(resultSpO2);
   Serial.printf("Result: %d bpm (%s), SpO2 %d%% (%s)%s\n", resultHR, levelWordHR(lh), resultSpO2, levelWordSpO2(ls),
                 resultMock ? " [mock]" : "");
@@ -2387,7 +2751,8 @@ void menuChoose() {
     case 0: goTo(S_TEMP); break;
     case 1: goTo(S_HISTORY); break;
     case 2: qrToGeneSense = true; goTo(S_QR); break;
-    case 3: goTo(S_WIFISETUP); startSetup(); break;
+    case 3: goTo(S_INFO); break;
+    case 4: goTo(S_WIFISETUP); startSetup(); break;
     case MENU_CLEAR:
       if (millis() < clearConfirmUntil) {
         clearHistory();
@@ -2436,6 +2801,19 @@ void onButton(int which) {                   // 1 = A, 2 = B, 3 = A+B
     case S_QR:
       if (which == 1) qrToGeneSense = !qrToGeneSense;
       else if (which == 2) goTo(S_IDLE);
+      break;
+    case S_REMIND:
+      if (which == 1) startMeasuring();
+      else if (which == 2) {
+        snoozeUntil = millis() + 10 * 60000UL;
+        if (!snoozeUntil) snoozeUntil = 1;
+        showToast("Sẽ nhắc lại sau 10 phút", C_GREEN);
+        say(SND_BEEP, true);
+        goTo(S_IDLE);
+      }
+      break;
+    case S_INFO:
+      if (which == 2) goTo(S_IDLE);
       break;
     case S_TEMP:
       if (which == 1) goTo(S_TEMP);          // measure again
@@ -2512,7 +2890,10 @@ void buttonLoop() {
 void ledLoop() {
   setLed(0, 0, 0, bleConnected ? 60 : 0);
   setLed(1, 0, wifiSsid.length() && WiFi.status() == WL_CONNECTED ? 40 : 0, 0);
-  if (screenNow == S_EMERGENCY) {
+  if (screenNow == S_REMIND) {               // blue blink: time to measure
+    bool on = (millis() / 500) % 2;
+    setLed(2, 0, 0, on ? 120 : 0);
+  } else if (screenNow == S_EMERGENCY) {
     bool on = (millis() / 300) % 2;
     setLed(2, on ? 120 : 0, 0, 0);
   } else if (screenNow == S_MEASURE) {
@@ -2546,6 +2927,9 @@ void setup() {
   }
   prefs.begin("gsk10", false);
   loadHistory();
+  loadReminders();
+  aht = new AHT20();                         // the board's own temperature/humidity sensor (reads every second)
+  startSD();
 
   startStorage();
   audioQ = xQueueCreate(8, sizeof(int));
@@ -2563,6 +2947,8 @@ void loop() {
   if (sensorOk) sensorLoop(); else mockLoop();
   measureLoop();
   tempLoop();
+  roomLoop();
+  reminderLoop();
   wifiLoop();
   ledLoop();
   if (bleWasConnected && !bleConnected) { delay(300); BLEDevice::startAdvertising(); }   // let the phone find it again

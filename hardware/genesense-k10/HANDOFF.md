@@ -26,7 +26,7 @@ The owner keeps a working copy in their Arduino folder. **Never put a Gemini key
 | DS18B20 waterproof probe (KIT0021 adapter) | **P1** (GPIO2), `TEMP_PIN` | Body temperature, own 1-Wire driver in the sketch (no library). Underarm, finishes when steady. |
 | 3×AA holder (FIT0619) | BAT IN | Use **alkaline** cells. Zinc "heavy duty" cells brown out and the board restarts or squeals. |
 
-The screen and the microSD card share one SPI bus (MOSI 21, SCK 12; screen CS 14, SD CS 40). The K10 library guards it with `xSPIlMutex`.
+The screen has its own SPI bus (FSPI: SCK 12, MOSI 21, CS 14). The **microSD slot is on a second bus**, `SPI1` (HSPI: SCK 44, MISO 41, MOSI 42, card CS **40**), shared with the board's font chip; mount it with `SD.begin(40, SPI1, 20000000, "/sd")` after `k10.begin()`. The card must be FAT32. Counting free space on a big card is slow, so the sketch reads it once at start.
 
 ## 4. Arduino setup
 
@@ -51,6 +51,15 @@ Board package "unihiker" (`https://downloadcd.dfrobot.com.cn/UNIHIKER/package_un
 - Vietnamese voice made once by Gemini and saved; beeps until then.
 - Body temperature (Menu → Đo nhiệt độ).
 - UI in the app's design language: light theme, Be Vietnam Pro, white cards, blue buttons, circle/triangle/octagon status marks, amber "THIẾT BỊ THỬ NGHIỆM" strip.
+
+### Added 25 October 2026 (compiled and previewed; not yet confirmed on the device)
+
+- **microSD:** every finished measurement (heart rate and SpO₂, or body temperature) is appended to `/GeneSense/readings.csv` with the room conditions; voice clips live in `/GeneSense/voice` when a card is present (first choice of storage, survives uploads). The web page offers the CSV for download.
+- **Room:** built-in AHT20 (temperature, humidity; `ROOM_TEMP_OFFSET` corrects the board's own warmth) and LTR303 light. Idle screen row "Phòng"; at `HOT_ROOM_C` (32 °C) or more an amber mark and, at most every 2 hours, a spoken "drink water" tip. In a dark room at night (or dark with no clock) the voice and beeps play at half volume.
+- **Reminders:** up to 3 daily times set on the device web page (`/settings`, Preferences `rem0`–`rem2`). At the time (within 30 minutes, needs the Wi-Fi clock) the "Đến giờ đo" screen, a voice repeated up to 3 times a minute apart and a blue blinking LED; A measures, B snoozes 10 minutes; skipped if measured in the last hour.
+- **Bluetooth:** also Health Thermometer (0x1809, body temperature, indicated when a measurement ends) and Environmental Sensing (0x181A, room temperature and humidity every 30 s). The GeneSense app does not read these yet.
+- **Menu → Thông tin máy:** card, saved readings, room, light, voice, reminder times, web address.
+- **Device web page** restyled to the app's light design, with body temperature, room, reminders and the CSV link. `/api/latest` gained `*_level`, `body_temp*`, `room`, `reminders`, `sd`, `sd_rows`.
 
 ## 7. Shell (3D print)
 
