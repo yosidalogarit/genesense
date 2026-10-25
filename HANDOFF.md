@@ -100,7 +100,7 @@ The owner has a small ESP32-S3 board with a screen and a speaker that now acts a
 
 ### UNIHIKER K10 measuring device (owner's hardware, October 2026)
 
-The owner's main demo device is now a DFRobot **UNIHIKER K10** (ESP32-S3, 240×320 screen, speaker, buttons A and B, accelerometer). Its sketch, the font generator and a full handoff (wiring, Arduino settings, and the root causes of past power and Wi-Fi bugs) are in `hardware/genesense-k10/`; the owner also keeps a working copy in their Arduino folder.
+The owner's main demo device is now a DFRobot **UNIHIKER K10** (ESP32-S3, 240×320 screen, speaker, buttons A and B, accelerometer). Its sketch, the font generator and a full handoff (wiring, Arduino settings, and the root causes of past power and Wi-Fi bugs) are in `hardware/genesense-k10/`; the owner also keeps a working copy in their Arduino folder. It signs in to a GeneSense account on first start and sends every reading to that profile (see "GeneSense devices signed in to an account" in section 4).
 
 - **Arduino setup:** board package "unihiker" from `https://downloadcd.dfrobot.com.cn/UNIHIKER/package_unihiker_index.json`, board **unihiker k10**, PSRAM **OPI PSRAM**, partition **16M Flash (3MB APP/9.9MB FATFS)**, Model **None**, USB CDC On Boot **Enabled** for the Serial Monitor.
 - **Sensor:** DFRobot **SEN0518** (MAX30102 with its own processor that outputs heart rate and SpO₂, about every 4 s) on the K10's I²C port, switch set to I2C, address 0x57. Without it the sketch falls back to clearly labelled mock values.
@@ -226,6 +226,14 @@ The look the friend's redesign introduced (PR #24, merged through #25) is the de
 - A dangerous reading moves focus to the emergency heading after the dialog closes; if it is older than the newest reading, its detail dialog (with the 115 button) opens instead.
 - Mock values never get a link: the K10 shows "Số liệu giả lập không gửi sang GeneSense" instead.
 - **Checked on a local server only** (browser at 375px: login prompt, the dialog after login, save, the same link twice, "Bỏ qua", a bad link, a dangerous reading). Not checked on the live site.
+
+### GeneSense devices signed in to an account ("Kết nối máy đo", 25 October 2026)
+
+- The owner asked for the K10 to **sync with the user's health profile**, with a sign-in the device forces on first start. It works like signing in a TV app (device authorization): the device asks `POST /api/devices/pair` (no account) for a code, shows a QR code of `<APP_BASE_URL>/#ket-noi-may?ma=ABCD2345` and the code in large letters, and asks `POST /api/devices/pair/token` every 5 s. The code lives 10 minutes.
+- In the app, the link (kept in `sessionStorage` through the login, like the device-reading link) opens the **"Kết nối máy đo" dialog** in the person's own account once onboarding is done: device name, the code to compare with the screen, whose profile it will fill. **Nothing is linked until "Kết nối".** Hồ sơ has a **"Máy đo GeneSense" panel**: the linked devices (name, linked since, last sent) with "Ngắt kết nối", and a field to type the code instead of scanning.
+- After "Kết nối" the device's next poll gets a long-lived token (once). It sends each reading to `POST /api/devices/readings` (`Authorization: Bearer`, plus the usual `X-Requested-With: HealthPredict`), saved like a device-link reading (source `device`, same `client_id` rule, so a reading also saved by the link counts once). `GET /api/devices/me` tells it the account name and whether it is still linked; `DELETE /api/devices/me` is its own sign-out.
+- Server: `backend/app/devices.py`, tables `device_pairings` and `devices` (hashes only; created by `create_all`). Wrong codes count against the same 5-per-15-minutes limit as sharing codes; code requests are capped at 300 an hour for the whole site. Trial-account clean-up deletes their devices too. Tests in `test_accounts.py`.
+- **Checked on a local throwaway server only** (Playwright at 375 px: login prompt, the dialog after login, connect, the device's token and an upload, the panel, a typed code, Bỏ qua, Ngắt kết nối). Not checked on the live site or with the real device; the device needs this merged and deployed.
 
 ### Family risk ("Di truyền" tab)
 

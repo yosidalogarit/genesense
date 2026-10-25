@@ -4,7 +4,7 @@ Written 25 October 2026 for the next Claude agent. The owner confirmed on 25 Oct
 
 ## 1. What this is
 
-A home measuring device for GeneSense on a DFRobot **UNIHIKER K10** (ESP32-S3 N16R8, 240×320 screen, speaker, buttons A/B, RGB LEDs, accelerometer, AHT20 temperature/humidity, LTR303 light sensor, microphones, camera, microSD slot). It measures heart rate and SpO₂ with a real sensor, guides older Vietnamese users by screen and voice, and hands readings to the GeneSense app over Bluetooth or a QR link. **It is a test device, not a medical device**; the screen says so on every page.
+A home measuring device for GeneSense on a DFRobot **UNIHIKER K10** (ESP32-S3 N16R8, 240×320 screen, speaker, buttons A/B, RGB LEDs, accelerometer, LTR303 light sensor, microphones, camera, microSD slot). It measures heart rate and SpO₂ with a real sensor, guides older Vietnamese users by screen and voice, and **signs in to a GeneSense account** so every reading goes to that person's profile (also Bluetooth and a QR link). **It is a test device, not a medical device**; the screen says so on every page.
 
 ## 2. Files
 
@@ -23,7 +23,6 @@ The owner keeps a working copy in their Arduino folder. **Never put a Gemini key
 |---|---|---|
 | DFRobot **SEN0518** (MAX30102 + its own processor) | I2C (Gravity, left/A-B edge) | Switch on the sensor set to **I2C**. Address **0x57**. Write `0x20 0x00 0x01` to start; read 8 bytes from register `0x0C`: byte 0 = SpO₂, bytes 2–5 = heart rate (big-endian). New values about every 4 s. It sends **no raw pulse wave**, so HRV, breathing rate or blood-pressure estimates are impossible with it. |
 | DFRobot **DFR0789** green LED latching button | **P0** (GPIO1) | Now the **on/off switch** (`GREEN_ON_LEVEL 1`: reads 1 when latched on and lit). |
-| DS18B20 waterproof probe (KIT0021 adapter) | **P1** (GPIO2), `TEMP_PIN` | Body temperature, own 1-Wire driver in the sketch (no library). Underarm, finishes when steady. |
 | 3×AA holder (FIT0619) | BAT IN | Use **alkaline** cells. Zinc "heavy duty" cells brown out and the board restarts or squeals. |
 
 The screen has its own SPI bus (FSPI: SCK 12, MOSI 21, CS 14). The **microSD slot is on a second bus**, `SPI1` (HSPI: SCK 44, MISO 41, MOSI 42, card CS **40**), shared with the board's font chip; mount it with `SD.begin(40, SPI1, 20000000, "/sd")` after `k10.begin()`. The card must be FAT32. Counting free space on a big card is slow, so the sketch reads it once at start.
@@ -40,26 +39,26 @@ Board package "unihiker" (`https://downloadcd.dfrobot.com.cn/UNIHIKER/package_un
 4. **Turn the speaker amplifier off (`digital_write(eAmp_Gain, 0)`) before going quiet**, after stopping I2S. Otherwise it amplifies noise and screams.
 5. **Saving voice clips:** the `voice_data` FAT partition does not exist with every board package or partition choice. Storage tries, in order: microSD (if added later), FAT `voice_data`, FAT `ffat`, LittleFS `model`, LittleFS `spiffs`, then memory only (clips are made again after power-off; the screen says "Sẵn sàng (tạm)"). The Serial Monitor lists the flash parts at start.
 6. **Gemini key:** a key in `GEMINI_KEY` is saved to flash (Preferences namespace `gsk10`, key `gkey`); later sketches with `""` keep using it. It can also be typed on the phone setup page. The voice row shows exactly what is missing ("Chưa có khóa", "Khóa sai", "Chờ Wi-Fi"…).
-7. **Gemini TTS** uses the Interactions API (`POST /v1beta/interactions`, model `gemini-3.8-flash-lite-tts` then `gemini-3.8-flash-tts`, input as a `user_input` step, `response_format` WAV 16 kHz). The answer's audio is the longest `"data"` string. Both models are on the free tier.
-8. **Wi-Fi setup by QR:** stop the saved Wi-Fi's auto-reconnect while the setup network is up, or the radio hops channels and phones cannot join.
+7. **Two tasks share the history and account texts:** take `histLock` around any change to `hist`, `pairCode`/`pairUrl`/`deviceToken`/`accountName`; the screen code uses `signedIn` and `accountText()`. Only one TLS connection at a time (`tlsLock`): two at once do not fit next to Bluetooth.
+8. **Gemini TTS** uses the Interactions API (`POST /v1beta/interactions`, model `gemini-3.8-flash-lite-tts` then `gemini-3.8-flash-tts`, input as a `user_input` step, `response_format` WAV 16 kHz). The answer's audio is the longest `"data"` string. Both models are on the free tier.
+9. **Wi-Fi setup by QR:** stop the saved Wi-Fi's auto-reconnect while the setup network is up, or the radio hops channels and phones cannot join.
 
 ## 6. What the sketch does (25 October 2026)
 
-- Guided 30 s measurement (8 s settle, outlier rejection, restart when the board moves), result cards with the app's range bars and status shapes, emergency screen ("Gọi cấp cứu 115") with the app's limits.
+- **Sign-in first.** Until the device is linked to an account, every screen leads to "Đăng nhập": step 1 Wi-Fi (A opens the phone setup), then a QR code and an 8-character code. Scanning opens `GENESENSE_URL/#ket-noi-may?ma=CODE`; the person, signed in to GeneSense on the phone, taps "Kết nối" (or types the code in Hồ sơ → Máy đo GeneSense). The device asks every 5 s, gets its own token, saves it with the account name (Preferences `dtok`, `dname`) and shows "Xin chào, <name>". A new code comes every 10 minutes, or with A.
+- **Sync.** A background task (`cloudTask`, core 0) sends each finished, non-mock reading to `POST /api/devices/readings` (Bearer token, `X-Requested-With: HealthPredict`). History flags: `REC_MOCK` 1, `REC_SENT` 2, `REC_LOCAL` 4 (taken before this account was linked, or without a clock and not just measured). The id is the same SHA-256 as the app's device link, so a reading also saved through the QR link counts once. It checks the account every 30 minutes (`GET /api/devices/me`); a 401 forgets it and goes back to sign-in. Menu → Đăng xuất (press A twice) tells the server (`DELETE /api/devices/me`) and forgets the account. One TLS connection at a time (`tlsLock`, shared with the voice task); the voice waits while the sign-in screen is up.
+- Guided 30 s measurement (8 s settle, outlier rejection, restart when the board moves), result cards with the app's range bars and status shapes, emergency screen ("Gọi cấp cứu 115") with the app's limits. "Đã lưu vào hồ sơ GeneSense" appears when the reading reached the profile.
+- Home screen rows: Cảm biến, Bluetooth ("Đã kết nối" / "Chưa kết nối"), Wi-Fi (the network name, or "Chưa kết nối"), Tài khoản (the name), and Giọng nói only while the voice is not ready.
 - Bluetooth: standard Heart Rate (0x180D) and Pulse Oximeter (0x1822); the final value is sent five times because the app averages five.
 - History of the last 100 results in flash with two charts; QR link into the GeneSense app (`#nhap-may-do?hr=&spo2=&t=`); local results page; Wi-Fi setup from a phone by QR code (with an optional Gemini key field).
+- **microSD:** every finished measurement goes to `/GeneSense/measurements.csv` (time, Unix time, heart rate, SpO₂, mock); voice clips live in `/GeneSense/voice` when a card is present (first choice of storage). The web page offers the CSV.
+- **Reminders:** up to 3 daily times set on the device web page (`/settings`, Preferences `rem0`–`rem2`). At the time (within 30 minutes, needs the Wi-Fi clock): the "Đến giờ đo" screen, the voice up to 3 times a minute apart and a blue blinking LED; A measures, B snoozes 10 minutes; skipped if measured in the last hour.
+- **Menu → Thông tin máy:** card, saved readings, account, sending status ("Cần hoàn thành hồ sơ" when the server answers 409), voice, reminder times, web address.
+- In a dark room at night (light sensor) the voice and beeps play at half volume.
 - Vietnamese voice made once by Gemini and saved; beeps until then.
-- Body temperature (Menu → Đo nhiệt độ).
-- UI in the app's design language: light theme, Be Vietnam Pro, white cards, blue buttons, circle/triangle/octagon status marks, amber "THIẾT BỊ THỬ NGHIỆM" strip.
-
-### Added 25 October 2026 (compiled and previewed; not yet confirmed on the device)
-
-- **microSD:** every finished measurement (heart rate and SpO₂, or body temperature) is appended to `/GeneSense/readings.csv` with the room conditions; voice clips live in `/GeneSense/voice` when a card is present (first choice of storage, survives uploads). The web page offers the CSV for download.
-- **Room:** built-in AHT20 (temperature, humidity; `ROOM_TEMP_OFFSET` corrects the board's own warmth) and LTR303 light. Idle screen row "Phòng"; at `HOT_ROOM_C` (32 °C) or more an amber mark and, at most every 2 hours, a spoken "drink water" tip. In a dark room at night (or dark with no clock) the voice and beeps play at half volume.
-- **Reminders:** up to 3 daily times set on the device web page (`/settings`, Preferences `rem0`–`rem2`). At the time (within 30 minutes, needs the Wi-Fi clock) the "Đến giờ đo" screen, a voice repeated up to 3 times a minute apart and a blue blinking LED; A measures, B snoozes 10 minutes; skipped if measured in the last hour.
-- **Bluetooth:** also Health Thermometer (0x1809, body temperature, indicated when a measurement ends) and Environmental Sensing (0x181A, room temperature and humidity every 30 s). The GeneSense app does not read these yet.
-- **Menu → Thông tin máy:** card, saved readings, room, light, voice, reminder times, web address.
-- **Device web page** restyled to the app's light design, with body temperature, room, reminders and the CSV link. `/api/latest` gained `*_level`, `body_temp*`, `room`, `reminders`, `sd`, `sd_rows`.
+- UI in the app's design language: light theme, Be Vietnam Pro, white cards, blue buttons, circle/triangle/octagon status marks, amber "THIẾT BỊ THỬ NGHIỆM" strip. The device web page uses the same light design.
+- **Removed on the owner's request (25 October 2026):** body temperature (DS18B20) and room temperature/humidity (AHT20), with their Bluetooth services. Do not add them back without asking.
+- Compiled and previewed on a PC; the sign-in and sync need the server change to be merged and deployed before they work on the device.
 
 ## 7. Shell (3D print)
 

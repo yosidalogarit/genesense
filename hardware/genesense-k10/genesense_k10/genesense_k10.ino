@@ -32,7 +32,8 @@
 #include <Preferences.h>
 #include <DNSServer.h>
 #include "qrcode.h"
-#include "gs_fonts.h"                      // Be Vietnam Pro, the app's font (in this folder)
+#include "gs_fonts.h"
+#include <mbedtls/sha256.h>                      // Be Vietnam Pro, the app's font (in this folder)
 
 // ================= SETTINGS (change these) =================
 const char* WIFI_NAME     = "";              // optional: 2.4 GHz Wi-Fi name. Easier: Menu > Cài Wi-Fi on the device
@@ -49,11 +50,8 @@ const float BEEP_VOLUME   = 0.25;
 #define USE_SEN0518 1                        // 1 = look for the SEN0518 sensor (switch on the sensor set to I2C)
 #define LED_BUTTON_PIN 1                     // green LED button = power switch: port P0 = 1, P1 = 2, no button = -1
 #define GREEN_ON_LEVEL 1                     // what the button sends when it is latched ON (lit). If on/off is the wrong way round, use 0
-#define TEMP_PIN 2                           // DS18B20 temperature probe (KIT0021): port P1 = 2, none = -1
 const char* SETUP_WIFI_NAME = "GeneSense-K10";   // the Wi-Fi the device makes while you set it up
 const char* GENESENSE_URL = "https://genesense-five.vercel.app";   // where "Xem trên GeneSense" leads
-const float HOT_ROOM_C    = 32.0;            // room this warm or warmer: "drink water" reminder (older people overheat easily)
-const float ROOM_TEMP_OFFSET = 0.0;          // the board warms its own sensor a little; if the room reads too warm, e.g. -2.0
 
 const char* TTS_MODELS[] = {"gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts"};
 const char* VOICE        = "Kore";
@@ -63,10 +61,11 @@ const char* SPEECH_STYLE = "Calm, warm and clear, a little slow, speaking kindly
 const uint8_t OXI_ADDR = 0x57;               // I2C address of the SEN0518
 
 // ---------- types (kept above the first function, Arduino needs that) ----------
-enum Screen { S_IDLE, S_PLACE, S_MEASURE, S_RESULT, S_EMERGENCY, S_MENU, S_HISTORY, S_QR, S_WIFISETUP, S_TEMP, S_REMIND, S_INFO };
-struct Rec { uint32_t t; uint8_t hr, spo2, flags, pad; };   // one saved measurement (flags: 1 = mock)
+enum Screen { S_IDLE, S_PLACE, S_MEASURE, S_RESULT, S_EMERGENCY, S_MENU, S_HISTORY, S_QR, S_WIFISETUP, S_REMIND, S_INFO, S_PAIR };
+struct Rec { uint32_t t; uint8_t hr, spo2, flags, pad; };   // one saved measurement (flags below)
+const uint8_t REC_MOCK = 1, REC_SENT = 2, REC_LOCAL = 4;    // mock values / saved in GeneSense / never sent (older, or no time)
 enum Level { SAFE, ATTN, ALERT };
-enum Clip { V_WELCOME, V_PLACE, V_START, V_HOLD, V_DONE, V_CHECK, V_SENT, V_NOPHONE, V_EMERGENCY, V_NOFINGER, V_UNSTABLE, V_TEMP, V_REMIND, V_HOT, CLIP_COUNT };
+enum Clip { V_WELCOME, V_PLACE, V_START, V_HOLD, V_DONE, V_CHECK, V_SENT, V_NOPHONE, V_EMERGENCY, V_NOFINGER, V_UNSTABLE, V_REMIND, V_LOGIN, CLIP_COUNT };
 enum Sound { SND_BEEP = -1, SND_OK = -2, SND_ALARM = -3, SND_TICK = -4, SND_ERR = -5 };
 
 const char* CLIP_TEXT[CLIP_COUNT] = {
@@ -81,9 +80,8 @@ const char* CLIP_TEXT[CLIP_COUNT] = {
   "Chỉ số ở mức nguy hiểm. Hãy đo lại ngay. Nếu thấy khó thở hoặc mệt lả, hãy gọi cấp cứu một một năm.",
   "Chưa đọc được ngón tay. Hãy đeo lại cảm biến cho vừa khít.",
   "Số đo chưa ổn định. Hãy ngồi yên, thả lỏng tay, rồi đo lại.",
-  "Kẹp đầu cảm biến nhiệt vào giữa nách, rồi khép chặt tay lại. Giữ yên khoảng ba phút.",
   "Đã đến giờ đo. Bấm nút A để bắt đầu đo.",
-  "Phòng đang nóng. Hãy uống thêm nước và ngồi chỗ mát.",
+  "Hãy đăng nhập. Dùng điện thoại có ứng dụng GeneSense để quét mã trên màn hình.",
 };
 
 struct ModelState {
@@ -173,35 +171,35 @@ int greenRaw = -1, greenStable = -1;         // green LED button: it latches; ON
 unsigned long greenChangedAt = 0;
 
 // menu + history
-const char* MENU_ITEMS[] = {"Đo nhiệt độ", "Lịch sử đo", "Xem bằng QR", "Thông tin máy", "Cài Wi-Fi", "Xóa lịch sử", "Quay lại"};
+const char* MENU_ITEMS[] = {"Lịch sử đo", "Xem bằng QR", "Thông tin máy", "Cài Wi-Fi", "Đăng xuất", "Xóa lịch sử", "Quay lại"};
 const int MENU_COUNT = 7;
-const int MENU_CLEAR = 5;                    // "Xóa lịch sử"
+const int MENU_LOGOUT = 4, MENU_CLEAR = 5;
+unsigned long logoutConfirmUntil = 0;
 
-// body temperature (DS18B20 on P1)
-enum TempState { T_NOPROBE, T_WAIT, T_DONE };
-TempState tempState = T_NOPROBE;
-float tempNow = 0, tempResult = 0;           // °C
-float tempLog[40];                           // one reading a second, newest last
-int tempLogN = 0;
-unsigned long tempStart = 0, tempConvAt = 0;
-bool tempConverting = false;
-const int TEMP_MAX_SECONDS = 300;            // give up waiting for a steady value after 5 minutes
-float lastBodyTemp = 0;                      // last finished body temperature, 0 = none since power-on
-String lastBodyTempTime;
+// GeneSense account: the device signs in once (QR + code on the screen, confirmed on the phone),
+// then sends each finished reading to that person's profile.
+String deviceToken, accountName;             // saved in flash (Preferences "dtok", "dname")
+String cloudHost;                            // from GENESENSE_URL
+String pairDeviceCode, pairCode, pairUrl;    // the code on the screen while signing in
+unsigned long pairExpiresAt = 0, pairPollAt = 0;
+volatile int pairProblem = 0;                // last HTTP problem while getting a code (0 = none, -1 = no connection)
+volatile bool signedIn = false;              // the screen code reads this; the strings above belong to the sending task
+volatile bool pairJustDone = false, accountRevoked = false, logoutRequested = false, readingSaved = false;
+volatile int syncProblem = 0;                // last HTTP problem while sending readings
+unsigned long syncPauseUntil = 0;
+SemaphoreHandle_t histLock = nullptr;        // the history (and the account texts) are changed by both tasks
+SemaphoreHandle_t tlsLock = nullptr;         // one secure connection at a time (memory)
 
 // microSD card: a log of every measurement (CSV), and the voice clips
 bool sdOk = false;
 uint32_t sdRows = 0;                         // measurements in the log
 float sdSizeGB = 0, sdFreeGB = 0;            // read once at start: counting free space on a big card is slow
 const char* SD_DIR = "/GeneSense";
-const char* SD_LOG = "/GeneSense/readings.csv";
+const char* SD_LOG = "/GeneSense/measurements.csv";
 
-// the room: built-in AHT20 (temperature, humidity) and LTR303 (light)
-AHT20* aht = nullptr;
-float roomTemp = NAN, roomHum = NAN;
+// light sensor (LTR303): a quieter voice in a dark room at night
 int roomLux = -1;
-bool roomHot = false;
-unsigned long lastRoomRead = 0, lastHotWarn = 0;
+unsigned long lastLightRead = 0;
 
 // reminders to measure, set on the device's web page (needs the clock, so Wi-Fi)
 const int REMIND_MAX = 3;
@@ -235,7 +233,6 @@ uint32_t ledNow[3] = {1, 1, 1};
 
 // Bluetooth
 BLECharacteristic* hrChar = nullptr;
-BLECharacteristic *tempChar = nullptr, *envTempChar = nullptr, *envHumChar = nullptr;
 BLECharacteristic* plxChar = nullptr;
 volatile bool bleConnected = false;
 bool bleWasConnected = false;
@@ -323,6 +320,54 @@ const char GOOGLE_ROOTS[] =
 "BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n"
 "9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n"
 "p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n"
+"-----END CERTIFICATE-----\n";
+
+// Root certificates of Let's Encrypt (ISRG Root X1, X2): the GeneSense site's certificates.
+const char WEB_ROOTS[] =
+"-----BEGIN CERTIFICATE-----\n"
+"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\n"
+"-----END CERTIFICATE-----\n"
+"-----BEGIN CERTIFICATE-----\n"
+"MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw\n"
+"CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg\n"
+"R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5MDQwMDAwMDBaFw00\n"
+"MDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBT\n"
+"ZWN1cml0eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYw\n"
+"EAYHKoZIzj0CAQYFK4EEACIDYgAEzZvVn4CDCuwJSvMWSj5cz3es3mcFDR0HttwW\n"
+"+1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7mAHf7AlF9\n"
+"ItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0T\n"
+"AQH/BAUwAwEB/zAdBgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZI\n"
+"zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW\n"
+"tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1\n"
+"/q4AaOeMSQ+2b1tbFfLn\n"
 "-----END CERTIFICATE-----\n";
 
 // Reads an HTTP response body: handles "chunked" replies and buffers the TLS stream.
@@ -444,21 +489,31 @@ void loadHistory() {
 }
 
 void addHistory(int hr, int spo2, bool mock) {
+  xSemaphoreTake(histLock, portMAX_DELAY);
   if (histCount == HIST_MAX) { memmove(hist, hist + 1, (HIST_MAX - 1) * sizeof(Rec)); histCount--; }
   time_t now = time(nullptr);
   Rec r;
   r.t = now > 1700000000 ? (uint32_t)now : 0;  // 0 = clock not set yet
   r.hr = hr;
   r.spo2 = spo2;
-  r.flags = mock ? 1 : 0;
+  r.flags = mock ? REC_MOCK : 0;
   r.pad = 0;
   hist[histCount++] = r;
   prefs.putBytes("hist", hist, histCount * sizeof(Rec));
+  xSemaphoreGive(histLock);
 }
 
 void clearHistory() {
+  xSemaphoreTake(histLock, portMAX_DELAY);
   histCount = 0;
   prefs.remove("hist");
+  xSemaphoreGive(histLock);
+}
+
+int unsentCount() {                          // readings still to send to the GeneSense profile
+  int n = 0;
+  for (int i = 0; i < histCount; i++) if (!(hist[i].flags & (REC_MOCK | REC_SENT | REC_LOCAL))) n++;
+  return n;
 }
 
 String recTime(const Rec& r) {               // "16/10 08:15", or "" if the time was unknown
@@ -697,17 +752,15 @@ void startSD() {
     if (sdRows) sdRows--;                    // the first line is the header
   } else {
     File n = SD.open(SD_LOG, FILE_WRITE);
-    if (n) { n.println("time,unix_time,heart_rate,spo2,body_temp_c,room_temp_c,room_humidity,room_light_lux,mock"); n.close(); }
+    if (n) { n.println("time,unix_time,heart_rate,spo2,mock"); n.close(); }
   }
   sdSizeGB = SD.cardSize() / 1073741824.0f;
   sdFreeGB = (SD.totalBytes() - SD.usedBytes()) / 1073741824.0f;
   Serial.printf("microSD: %.1f GB, %.1f GB free, %u measurements in %s\n", sdSizeGB, sdFreeGB, (unsigned)sdRows, SD_LOG);
 }
 
-String csvNum(float v, int digits) { return isnan(v) ? String("") : String(v, digits); }
-
-// One line per finished measurement: heart rate and SpO2, or a body temperature (0 = not measured).
-void logReading(int hr, int spo2, float bodyT, bool mock) {
+// One line per finished measurement.
+void logReading(int hr, int spo2, bool mock) {
   if (!sdOk) return;
   File f = SD.open(SD_LOG, FILE_APPEND);
   if (!f) { Serial.println("microSD: could not write the log"); return; }
@@ -715,10 +768,8 @@ void logReading(int hr, int spo2, float bodyT, bool mock) {
   bool clock = now > 1700000000;
   char when[20] = "";
   if (clock) { struct tm t; localtime_r(&now, &t); strftime(when, sizeof(when), "%Y-%m-%d %H:%M", &t); }
-  String line = String(when) + "," + (clock ? String((unsigned long)now) : String("")) + "," +
-                (hr ? String(hr) : String("")) + "," + (spo2 ? String(spo2) : String("")) + "," +
-                (bodyT > 0 ? String(bodyT, 1) : String("")) + "," + csvNum(roomTemp, 1) + "," + csvNum(roomHum, 0) + "," +
-                (roomLux >= 0 ? String(roomLux) : String("")) + "," + (mock ? "1" : "0");
+  String line = String(when) + "," + (clock ? String((unsigned long)now) : String("")) + "," + String(hr) + "," +
+                String(spo2) + "," + (mock ? "1" : "0");
   f.println(line);
   f.close();
   sdRows++;
@@ -991,7 +1042,10 @@ void voiceTask(void*) {
         if (voiceReady[id] || (id == V_NOFINGER && !USE_SEN0518)) continue;
         missing = true;
         if (WiFi.status() != WL_CONNECTED) break;
+        while (screenNow == S_PAIR) vTaskDelay(pdMS_TO_TICKS(2000));   // signing in comes first
+        xSemaphoreTake(tlsLock, portMAX_DELAY);
         if (makeClip(id)) voiceReady[id] = true;
+        xSemaphoreGive(tlsLock);
         dirty = true;
         vTaskDelay(pdMS_TO_TICKS(7000));     // free tier allows only a few requests per minute
       }
@@ -1017,6 +1071,264 @@ void startVoiceTask() {
   voiceProblem = 0;
   voiceTaskRunning = true;
   xTaskCreatePinnedToCore(voiceTask, "voice", 16 * 1024, nullptr, 1, nullptr, 0);
+}
+
+// =====================================================================
+// GeneSense account: sign in by QR code, then send every reading to the profile
+// =====================================================================
+WiFiClientSecure* ctls = nullptr;
+
+String accountText() {                       // a copy for the screen
+  xSemaphoreTake(histLock, portMAX_DELAY);
+  String a = accountName;
+  xSemaphoreGive(histLock);
+  return a;
+}
+
+void setAccountName(const String& name) {
+  xSemaphoreTake(histLock, portMAX_DELAY);
+  accountName = name;
+  xSemaphoreGive(histLock);
+  prefs.putString("dname", name);
+  dirty = true;
+}
+
+void loadAccount() {
+  deviceToken = prefs.getString("dtok", "");
+  accountName = prefs.getString("dname", "");
+  signedIn = deviceToken.length() > 0;
+  String url = GENESENSE_URL;
+  int a = url.indexOf("://");
+  cloudHost = url.substring(a < 0 ? 0 : a + 3);
+  int b = cloudHost.indexOf('/');
+  if (b >= 0) cloudHost = cloudHost.substring(0, b);
+  Serial.println(deviceToken.length() ? "GeneSense account: " + accountName : String("GeneSense account: not signed in"));
+}
+
+void forgetAccount() {
+  signedIn = false;
+  xSemaphoreTake(histLock, portMAX_DELAY);
+  deviceToken = "";
+  accountName = "";
+  pairDeviceCode = pairCode = pairUrl = "";
+  xSemaphoreGive(histLock);
+  prefs.remove("dtok");
+  prefs.remove("dname");
+  dirty = true;
+}
+
+// A string value from a small JSON answer ("" if missing). Enough for the few fields the server sends.
+String jsonString(const String& j, const char* key) {
+  String k = String("\"") + key + "\"";
+  int i = j.indexOf(k);
+  if (i < 0) return "";
+  i = j.indexOf(':', i + k.length());
+  if (i < 0) return "";
+  while (++i < (int)j.length() && j[i] == ' ') {}
+  if (i >= (int)j.length() || j[i] != '"') return "";
+  String out;
+  for (i++; i < (int)j.length() && j[i] != '"'; i++) {
+    if (j[i] == '\\' && i + 1 < (int)j.length()) i++;
+    out += j[i];
+  }
+  return out;
+}
+
+long jsonInt(const String& j, const char* key) {
+  String k = String("\"") + key + "\"";
+  int i = j.indexOf(k);
+  if (i < 0) return -1;
+  i = j.indexOf(':', i + k.length());
+  return i < 0 ? -1 : j.substring(i + 1).toInt();
+}
+
+// One HTTPS request to the GeneSense server. Returns the HTTP code (-1 = no connection) and the answer.
+int cloudRequest(const char* method, const String& path, const String& json, String& reply) {
+  reply = "";
+  xSemaphoreTake(tlsLock, portMAX_DELAY);
+  ctls->stop();
+  ctls->setCACert(WEB_ROOTS);
+  ctls->setHandshakeTimeout(20);
+  int code = -1;
+  if (ctls->connect(cloudHost.c_str(), 443)) {
+    // The server refuses changes without this header (its guard against other web pages).
+    String h = String(method) + " " + path + " HTTP/1.1\r\nHost: " + cloudHost +
+               "\r\nUser-Agent: GeneSense-K10\r\nX-Requested-With: HealthPredict\r\nConnection: close\r\n";
+    if (deviceToken.length()) h += "Authorization: Bearer " + deviceToken + "\r\n";
+    if (json.length()) h += "Content-Type: application/json\r\nContent-Length: " + String(json.length()) + "\r\n";
+    h += "\r\n" + json;
+    const uint8_t* d = (const uint8_t*)h.c_str();
+    size_t n = h.length();
+    bool ok = true;
+    while (n && ok) { size_t w = ctls->write(d, min(n, (size_t)1024)); ok = w > 0; d += w; n -= w; }
+    if (ok) {
+      HttpBody b;
+      b.c = ctls;
+      b.timeoutMs = 15000;
+      String status = b.rawLine();
+      code = status.length() > 12 ? status.substring(9, 12).toInt() : 0;
+      for (;;) {
+        String line = b.rawLine();
+        if (line.length() == 0) break;
+        line.toLowerCase();
+        if (line.startsWith("transfer-encoding:") && line.indexOf("chunked") > 0) b.chunked = true;
+        if (line.startsWith("content-length:")) b.left = line.substring(15).toInt();
+      }
+      if (b.chunked) b.left = 0;
+      for (int ch, k = 0; k < 2000 && (ch = b.read()) >= 0; k++) reply += (char)ch;
+    }
+  } else {
+    char err[100];
+    ctls->lastError(err, sizeof(err));
+    Serial.printf("GeneSense: cannot connect to %s: %s\n", cloudHost.c_str(), err);
+  }
+  ctls->stop();
+  xSemaphoreGive(tlsLock);
+  return code;
+}
+
+// Same id as the app makes for a device link: a reading sent both ways is saved once.
+String readingId(uint32_t t, int hr, int spo2, uint32_t salt) {
+  String text = t ? "genesense-device|" + String((unsigned long)t) + "000|" + String(hr) + "|" + String(spo2)
+                  : "genesense-k10|" + String((unsigned long)salt) + "|" + String(hr) + "|" + String(spo2);
+  uint8_t h[32];
+  mbedtls_sha256((const uint8_t*)text.c_str(), text.length(), h, 0);
+  char hex[65];
+  for (int i = 0; i < 32; i++) sprintf(hex + 2 * i, "%02x", h[i]);
+  String x = hex;
+  return x.substring(0, 8) + "-" + x.substring(8, 12) + "-" + x.substring(12, 16) + "-" + x.substring(16, 20) + "-" + x.substring(20, 32);
+}
+
+void pairStep() {                            // get a code, then ask every few seconds whether it was confirmed
+  String reply;
+  unsigned long now = millis();
+  if (!pairDeviceCode.length() || (long)(now - pairExpiresAt) >= 0) {
+    int code = cloudRequest("POST", "/api/devices/pair", String("{\"name\":\"") + DEVICE_NAME + "\"}", reply);
+    if (code != 201) {
+      pairProblem = code;
+      pairDeviceCode = "";
+      dirty = true;
+      Serial.printf("GeneSense: no sign-in code (HTTP %d) %s\n", code, reply.substring(0, 120).c_str());
+      vTaskDelay(pdMS_TO_TICKS(10000));
+      return;
+    }
+    long life = jsonInt(reply, "expires_in");
+    xSemaphoreTake(histLock, portMAX_DELAY);
+    pairCode = jsonString(reply, "user_code");
+    pairUrl = jsonString(reply, "verification_url");
+    pairDeviceCode = jsonString(reply, "device_code");
+    xSemaphoreGive(histLock);
+    pairExpiresAt = now + (life > 60 ? life - 20 : 580) * 1000UL;
+    pairPollAt = now + 5000;
+    pairProblem = 0;
+    dirty = true;
+    Serial.println("GeneSense: sign-in code " + pairCode);
+    return;
+  }
+  if ((long)(now - pairPollAt) < 0) return;
+  pairPollAt = now + 5000;
+  int code = cloudRequest("POST", "/api/devices/pair/token", "{\"device_code\":\"" + pairDeviceCode + "\"}", reply);
+  if (code == 202) return;                   // not confirmed yet
+  if (code == 404) { xSemaphoreTake(histLock, portMAX_DELAY); pairDeviceCode = pairCode = ""; xSemaphoreGive(histLock); return; }   // expired
+  if (code != 200) { Serial.printf("GeneSense: sign-in check HTTP %d\n", code); return; }
+  String token = jsonString(reply, "token");
+  if (!token.length()) return;
+  // Readings already on the device stay here: only new ones go to this account.
+  xSemaphoreTake(histLock, portMAX_DELAY);
+  for (int i = 0; i < histCount; i++) hist[i].flags |= REC_LOCAL;
+  prefs.putBytes("hist", hist, histCount * sizeof(Rec));
+  xSemaphoreGive(histLock);
+  String name = jsonString(reply, "display_name");
+  prefs.putString("dtok", token);
+  xSemaphoreTake(histLock, portMAX_DELAY);
+  deviceToken = token;
+  pairDeviceCode = pairCode = pairUrl = "";
+  xSemaphoreGive(histLock);
+  setAccountName(name);
+  syncProblem = 0;
+  signedIn = true;
+  Serial.println("GeneSense: signed in as " + name);
+  pairJustDone = true;
+}
+
+void checkAccount() {                        // still linked? whose readings?
+  String reply;
+  int code = cloudRequest("GET", "/api/devices/me", "", reply);
+  if (code == 200) {
+    String name = jsonString(reply, "display_name");
+    if (name.length() && name != accountText()) setAccountName(name);
+  } else if (code == 401) {
+    Serial.println("GeneSense: this device was disconnected from the account");
+    forgetAccount();
+    accountRevoked = true;
+  }
+}
+
+void syncOne() {                             // send the oldest unsent reading
+  if ((long)(millis() - syncPauseUntil) < 0) return;
+  xSemaphoreTake(histLock, portMAX_DELAY);
+  int i = 0;
+  while (i < histCount && (hist[i].flags & (REC_MOCK | REC_SENT | REC_LOCAL))) i++;
+  if (i == histCount) { xSemaphoreGive(histLock); return; }
+  Rec r = hist[i];
+  bool fresh = i == histCount - 1 && haveResult && millis() - resultAtMs < 15 * 60000UL;
+  if (!r.t && !fresh) {                      // no time and not just measured: the server could not date it
+    hist[i].flags |= REC_LOCAL;
+    prefs.putBytes("hist", hist, histCount * sizeof(Rec));
+    xSemaphoreGive(histLock);
+    return;
+  }
+  xSemaphoreGive(histLock);
+  String body = "{\"heart_rate\":" + String(r.hr) + ",\"spo2\":" + String(r.spo2) +
+                (r.t ? ",\"measured_at\":" + String((unsigned long)r.t) : String("")) +
+                ",\"client_id\":\"" + readingId(r.t, r.hr, r.spo2, resultAtMs) + "\"}";
+  String reply;
+  int code = cloudRequest("POST", "/api/devices/readings", body, reply);
+  if (code == 401) { forgetAccount(); accountRevoked = true; return; }
+  if (code == 201 || code == 422) {          // saved, or refused for good (e.g. a bad time): do not send again
+    xSemaphoreTake(histLock, portMAX_DELAY);
+    for (int k = 0; k < histCount; k++)
+      if (hist[k].t == r.t && hist[k].hr == r.hr && hist[k].spo2 == r.spo2 && !(hist[k].flags & (REC_SENT | REC_LOCAL))) {
+        hist[k].flags |= code == 201 ? REC_SENT : REC_LOCAL;
+        break;
+      }
+    prefs.putBytes("hist", hist, histCount * sizeof(Rec));
+    xSemaphoreGive(histLock);
+    syncProblem = 0;
+    if (code == 201) { readingSaved = true; Serial.printf("GeneSense: saved %d bpm, SpO2 %d%%\n", r.hr, r.spo2); }
+    else Serial.println("GeneSense: reading refused: " + reply.substring(0, 120));
+    dirty = true;
+    return;
+  }
+  syncProblem = code;                        // 409 = the profile is not finished; others: try again later
+  syncPauseUntil = millis() + (code == 409 ? 10 : 1) * 60000UL;
+  Serial.printf("GeneSense: sending failed (HTTP %d), trying again later\n", code);
+  dirty = true;
+}
+
+void cloudTask(void*) {
+  ctls = new WiFiClientSecure;
+  unsigned long lastCheck = 0;
+  bool checked = false;
+  for (;;) {
+    if (logoutRequested) {                   // tell the server if it can, then forget the account here
+      String reply;
+      if (deviceToken.length() && WiFi.status() == WL_CONNECTED) cloudRequest("DELETE", "/api/devices/me", "", reply);
+      forgetAccount();
+      logoutRequested = false;
+      continue;
+    }
+    if (WiFi.status() != WL_CONNECTED || setupActive) { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }
+    if (!signedIn) {
+      checked = false;
+      if (screenNow == S_PAIR) pairStep();
+      vTaskDelay(pdMS_TO_TICKS(300));
+      continue;
+    }
+    if (!checked || millis() - lastCheck > 30 * 60000UL) { checkAccount(); checked = true; lastCheck = millis(); }
+    if (deviceToken.length()) syncOne();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  }
 }
 
 // =====================================================================
@@ -1057,18 +1369,6 @@ void startBluetooth() {
   features->setValue(none, 2);
   plx->start();
 
-  BLEService* ht = server->createService(BLEUUID((uint16_t)0x1809));   // Health Thermometer: body temperature
-  tempChar = ht->createCharacteristic(BLEUUID((uint16_t)0x2A1C), BLECharacteristic::PROPERTY_INDICATE);
-  tempChar->addDescriptor(new BLE2902());
-  ht->start();
-
-  BLEService* env = server->createService(BLEUUID((uint16_t)0x181A));  // Environmental Sensing: the room
-  envTempChar = env->createCharacteristic(BLEUUID((uint16_t)0x2A6E), BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  envTempChar->addDescriptor(new BLE2902());
-  envHumChar = env->createCharacteristic(BLEUUID((uint16_t)0x2A6F), BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  envHumChar->addDescriptor(new BLE2902());
-  env->start();
-
   BLEService* info = server->createService(BLEUUID((uint16_t)0x180A));
   info->createCharacteristic(BLEUUID((uint16_t)0x2A29), BLECharacteristic::PROPERTY_READ)->setValue("GeneSense (thu nghiem)");
   info->createCharacteristic(BLEUUID((uint16_t)0x2A24), BLECharacteristic::PROPERTY_READ)->setValue(USE_SEN0518 ? "K10 + SEN0518" : "K10 gia lap");
@@ -1077,7 +1377,6 @@ void startBluetooth() {
   BLEAdvertising* adv = BLEDevice::getAdvertising();
   adv->addServiceUUID(BLEUUID((uint16_t)0x180D));
   adv->addServiceUUID(BLEUUID((uint16_t)0x1822));
-  adv->addServiceUUID(BLEUUID((uint16_t)0x1809));
   adv->setScanResponse(true);
   BLEDevice::startAdvertising();
   Serial.printf("Bluetooth ready as \"%s\"\n", DEVICE_NAME);
@@ -1091,22 +1390,6 @@ void notifyValues(int hr, int spo2) {
   uint8_t plxPacket[5] = {0x00, (uint8_t)(s & 0xFF), (uint8_t)(s >> 8), (uint8_t)(p & 0xFF), (uint8_t)(p >> 8)};
   plxChar->setValue(plxPacket, 5);
   plxChar->notify();
-}
-
-void notifyBodyTemp(float c) {               // IEEE-11073 FLOAT: 24-bit value, exponent -1, in °C
-  int32_t m = (int32_t)roundf(c * 10);
-  uint8_t p[5] = {0x00, (uint8_t)(m & 0xFF), (uint8_t)((m >> 8) & 0xFF), (uint8_t)((m >> 16) & 0xFF), 0xFF};
-  tempChar->setValue(p, 5);
-  if (bleConnected) tempChar->indicate();
-}
-
-void updateRoomBle() {                       // 0.01 °C and 0.01 % steps
-  if (isnan(roomTemp)) return;
-  int16_t t = (int16_t)roundf(roomTemp * 100);
-  uint16_t h = (uint16_t)roundf(constrain(roomHum, 0.0f, 100.0f) * 100);
-  envTempChar->setValue((uint8_t*)&t, 2);
-  envHumChar->setValue((uint8_t*)&h, 2);
-  if (bleConnected) { envTempChar->notify(); envHumChar->notify(); }
 }
 
 // The app averages the last 5 values it got, so the same final value is sent 5 times:
@@ -1143,8 +1426,7 @@ main{max-width:560px;margin:0 auto}h1{font-size:26px;color:#0d2c69;margin:8px 0 
 .btn{display:block;text-align:center;background:#0756ce;color:#fff;font-weight:700;padding:14px;border-radius:12px;text-decoration:none;margin:12px 0}
 .btn.outline{background:#fff;color:#0756ce;border:1px solid #b7c7dc}.muted{color:#52627a;font-size:16px}
 table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px 4px;border-top:1px solid #dbe5f1}a{color:#0756ce}</style></head>
-<body><main><span class="strip">THIẾT BỊ THỬ NGHIỆM</span><h1>GeneSense K10</h1><div id="out">Đang tải...</div>
-<h2>Phòng</h2><div class="card" id="room">Đang đọc...</div>
+<body><main><span class="strip">THIẾT BỊ THỬ NGHIỆM</span><h1>GeneSense K10</h1><p class="muted" id="acct"></p><div id="out">Đang tải...</div>
 <h2>Nhắc đo</h2><div class="card"><div id="rem"></div><a class="btn outline" href="/settings">Đặt giờ nhắc</a></div>
 <h2>Lịch sử đo</h2><a class="btn outline" id="csv" href="/readings.csv" hidden>Tải bảng số đo (CSV)</a>
 <table><thead><tr><th>Lúc</th><th>Nhịp</th><th>SpO2</th><th></th></tr></thead><tbody id="hist"></tbody></table>
@@ -1162,10 +1444,7 @@ o.appendChild(card('Oxy trong máu (SpO2)',d.spo2,'%',d.spo2_level,d.spo2_status
 o.appendChild(el('p','muted',(d.mock?'Số liệu giả lập. ':'')+(d.time?'Đo lúc '+d.time:'')));
 if(d.link){const a=el('a','btn','Xem trên GeneSense');a.href=d.link;o.appendChild(a)}}
 else o.appendChild(el('p','','Chưa có lần đo nào. Bấm nút A trên máy để đo.'));
-if(d.body_temp)o.appendChild(card('Nhiệt độ cơ thể (đo ở nách)'+(d.body_temp_time?', lúc '+d.body_temp_time:''),String(d.body_temp).replace('.',','),'°C',d.body_temp_level,d.body_temp_status));
-const r=$('room');r.innerHTML='';const rm=d.room||{};
-if(rm.temp!=null){r.appendChild(card('Nhiệt độ trong phòng',String(rm.temp).replace('.',',')+' °C','độ ẩm '+rm.humidity+'%',rm.hot?'attention':'safe',rm.hot?'Phòng nóng, hãy uống thêm nước':'Dễ chịu'));r.lastChild.className=''}
-else r.textContent='Đang đọc...';if(rm.lux!=null&&rm.lux>=0)r.appendChild(el('p','muted','Ánh sáng: '+rm.lux+' lux'));
+$('acct').textContent=d.account?'Gửi chỉ số vào hồ sơ của '+d.account+(d.unsent?' (còn '+d.unsent+' lần chờ gửi)':''):'Chưa đăng nhập GeneSense';
 $('rem').textContent=d.reminders&&d.reminders.length?'Máy nhắc đo lúc: '+d.reminders.join(', '):'Chưa đặt giờ nhắc.';
 $('csv').hidden=!d.sd;if(d.sd)$('csv').textContent='Tải bảng số đo (CSV, '+d.sd_rows+' lần đo)'}catch(e){}
 try{const h=await (await fetch('/api/history')).json();const t=$('hist');t.innerHTML='';
@@ -1216,7 +1495,7 @@ void handleCsv() {
 }
 
 const char* levelCss(Level l) { return l == ALERT ? "alert" : l == ATTN ? "attention" : "safe"; }
-String jsonNum(float v, int digits) { return isnan(v) ? String("null") : String(v, digits); }
+
 
 void handleLatest() {
   String j = "{\"have\":" + String(haveResult ? "true" : "false");
@@ -1229,16 +1508,12 @@ void handleLatest() {
          ",\"mock\":" + (resultMock ? "true" : "false") + ",\"time\":\"" + resultTime + "\"" +
          ",\"link\":\"" + latestLink() + "\"";
   }
-  if (lastBodyTemp > 0)
-    j += ",\"body_temp\":" + String(lastBodyTemp, 1) + ",\"body_temp_status\":\"" + levelWordTemp(lastBodyTemp) +
-         "\",\"body_temp_level\":\"" + levelCss(levelTemp(lastBodyTemp)) + "\",\"body_temp_time\":\"" + lastBodyTempTime + "\"";
-  j += ",\"room\":{\"temp\":" + jsonNum(roomTemp, 1) + ",\"humidity\":" + jsonNum(roomHum, 0) + ",\"lux\":" + String(roomLux) +
-       ",\"hot\":" + (roomHot ? "true" : "false") + "}";
   j += ",\"reminders\":[";
   bool first = true;
   for (int i = 0; i < REMIND_MAX; i++)
     if (remindAt[i] >= 0) { j += String(first ? "" : ",") + "\"" + hhmm(remindAt[i]) + "\""; first = false; }
   j += "],\"sd\":" + String(sdOk ? "true" : "false") + ",\"sd_rows\":" + String(sdRows);
+  j += ",\"account\":\"" + jsonEscape(accountText().c_str()) + "\",\"unsent\":" + String(unsentCount());
   j += ",\"device\":\"" + String(DEVICE_NAME) + "\"}";
   web.send(200, "application/json", j);
 }
@@ -1831,11 +2106,11 @@ void drawIdle() {
     else statusRow(y, h, "Cảm biến", "Đã nối", ++i == rows);
     y += h;
   }
-  statusRow(y, h, "Bluetooth", bleConnected ? "Đã nối" : "Chờ điện thoại", ++i == rows);
+  statusRow(y, h, "Bluetooth", bleConnected ? "Đã kết nối" : "Chưa kết nối", ++i == rows);
   y += h;
-  statusRow(y, h, "Wi-Fi", !wifiSsid.length() ? "Chưa cài (Menu)" : WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "Đang nối...", ++i == rows);
+  statusRow(y, h, "Wi-Fi", WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String("Chưa kết nối"), ++i == rows);
   y += h;
-  statusRow(y, h, "Phòng", roomText(), ++i == rows, roomHot);
+  statusRow(y, h, "Tài khoản", accountText(), ++i == rows);
   y += h;
   if (voiceRow) { statusRow(y, h, "Giọng nói", v, ++i == rows, vWarn); y += h; }
   if (mockMode()) statusRow(y, h, "Thử cấp cứu", demoLow ? "BẬT · A+B tắt" : "A+B để bật", ++i == rows, demoLow);
@@ -2147,53 +2422,6 @@ void drawEmergency() {
   bottomBanner();
 }
 
-void drawTemp() {
-  screenStart();
-  title("Nhiệt độ cơ thể");
-  if (tempState == T_NOPROBE) {
-    statusIcon(W / 2, 122, ATTN);
-    textC(W / 2, 176, "Chưa thấy cảm biến nhiệt", C_INK, GS_BOLD);
-    wrapC(200, "Cắm cảm biến DS18B20 vào cổng P1, rồi bấm A để thử lại.", C_INK2, GS_SMALL);
-    buttonHint(true, "Thử lại", BTN_MAIN);
-    buttonHint(false, "Về");
-    bottomBanner();
-    return;
-  }
-  bool done = tempState == T_DONE;
-  float t = done ? tempResult : tempNow;
-  card(8, 80, W - 16, 120, 16, C_SURF, C_LINE);
-  if (t > 0) {
-    char s[8];
-    snprintf(s, sizeof(s), "%.1f", t);
-    int w = textW(s, GS_HUGE), u = textW("°C", GS_TITLE);
-    int x = (W - w - u - 4) / 2;
-    text(x, 150, s, done || t >= 34 ? C_INK : C_INK2, GS_HUGE);
-    text(x + w + 4, 120, "°C", C_INK2, GS_TITLE);
-  } else {
-    textC(W / 2, 140, "Đang đọc...", C_INK2, GS_BODY);
-  }
-  if (done) {
-    Level l = levelTemp(t);
-    const char* word = levelWordTemp(t);
-    tag((W - tagW(word, GS_BOLD)) / 2, 162, l, word);
-    textC(W / 2, 222, "Đo ở nách", C_INK2, GS_SMALL);
-    textC(W / 2, 242, "Sốt từ 37,5 · sốt cao từ 39", C_INK2, GS_SMALL);
-  } else {
-    unsigned long secs = (millis() - tempStart) / 1000;
-    char m[8];
-    snprintf(m, sizeof(m), "%lu:%02lu", secs / 60, secs % 60);
-    textC(W / 2, 182, t > 0 && t < 34 ? "Kẹp vào nách, khép tay lại" : String("Chờ số đứng yên · ") + m, C_INK2, GS_SMALL);
-    float frac = min(1.0f, secs / 180.0f);   // about 3 minutes in the armpit
-    fillRR(20, 210, W - 40, 8, 4, C_LINE);
-    if (frac > 0) fillRR(20, 210, max(8, (int)((W - 40) * frac)), 8, 4, C_BLUE);
-    textC(W / 2, 240, "Giữ yên tay, máy sẽ báo", C_INK2, GS_SMALL);
-  }
-  buttonHint(true, done ? "Đo lại" : nullptr, BTN_MAIN);
-  buttonHint(false, "Về");
-  drawToast();
-  bottomBanner();
-}
-
 void drawRemind() {
   screenStart();
   card(8, 48, W - 16, 150, 16, C_SURF, C_LINE);
@@ -2224,9 +2452,11 @@ void drawInfo() {
   y += RH;
   statusRow(y, RH, "Đã lưu", sdOk ? String(sdRows) + " lần (thẻ)" : String(histCount) + " lần (máy)", false);
   y += RH;
-  statusRow(y, RH, "Phòng", roomText(), false, roomHot);
+  statusRow(y, RH, "Tài khoản", accountText(), false);
   y += RH;
-  statusRow(y, RH, "Ánh sáng", roomLux < 0 ? String("–") : String(roomLux) + " lux" + (soundScale() < 1 ? " · đêm" : ""), false);
+  int unsent = unsentCount();
+  statusRow(y, RH, "Gửi GeneSense", syncProblem == 409 ? String("Cần hoàn thành hồ sơ") : unsent ? "Chờ gửi " + String(unsent)
+            : String("Đã gửi hết"), false, syncProblem == 409);
   y += RH;
   bool vWarn;
   String v = voiceStatus(vWarn);
@@ -2239,6 +2469,42 @@ void drawInfo() {
   statusRow(y, RH, "Web", up ? WiFi.localIP().toString() : String("Chưa có Wi-Fi"), true);
   textC(W / 2, BTN_Y - 4, up ? "Đặt giờ nhắc trên trang web" : "Cài Wi-Fi để đặt giờ nhắc", C_INK2, GS_SMALL);
   buttonHint(false, "Về");
+  bottomBanner();
+}
+
+void drawPair() {
+  screenStart();
+  textC(W / 2, 66, "Đăng nhập", C_INK, GS_TITLE);
+  bool up = WiFi.status() == WL_CONNECTED;
+  if (!wifiSsid.length() || !up) {           // step 1: Wi-Fi
+    statusIcon(W / 2, 122, ATTN);
+    textC(W / 2, 176, wifiSsid.length() ? "Đang nối Wi-Fi..." : "Bước 1: nối Wi-Fi", C_INK, GS_BOLD);
+    wrapC(200, wifiSsid.length() ? "Nếu lâu không được, bấm A để cài lại Wi-Fi." : "Máy đo cần Wi-Fi để đăng nhập. Bấm A để cài.",
+          C_INK2, GS_SMALL);
+    buttonHint(true, "Cài Wi-Fi", BTN_MAIN);
+    bottomBanner();
+    return;
+  }
+  xSemaphoreTake(histLock, portMAX_DELAY);
+  String code = pairCode, url = pairUrl;
+  xSemaphoreGive(histLock);
+  if (!code.length()) {
+    ring(W / 2, 130, 22, 28, 1, C_LINE);
+    float a = (millis() % 1200) / 1200.0f;
+    ring(W / 2, 130, 22, 28, 0.25f, C_BLUE);
+    (void)a;
+    textC(W / 2, 192, pairProblem ? "Chưa lấy được mã" : "Đang lấy mã...", C_INK, GS_BOLD);
+    if (pairProblem) textC(W / 2, 214, pairProblem < 0 ? "Không vào được mạng, thử lại..." : "Lỗi " + String(pairProblem) + ", thử lại...",
+                           C_INK2, GS_SMALL);
+    bottomBanner();
+    return;
+  }
+  makeQR(url);
+  drawQRCode(78, 116);
+  String c = code.substring(0, 4) + " " + code.substring(4);
+  textC(W / 2, 224, c, C_NAVY, GS_BIG);
+  textC(W / 2, 246, "Quét mã bằng điện thoại", C_INK2, GS_SMALL);
+  buttonHint(true, "Mã mới");
   bottomBanner();
 }
 
@@ -2260,15 +2526,15 @@ void render() {
     case S_HISTORY: drawHistory(); break;
     case S_QR: drawQRScreen(); break;
     case S_WIFISETUP: drawWifiSetup(); break;
-    case S_TEMP: drawTemp(); break;
     case S_REMIND: drawRemind(); break;
     case S_INFO: drawInfo(); break;
+    case S_PAIR: drawPair(); break;
   }
   screen.pushImage(0, 0, W, H, cv->getBuffer());
 }
 
 // =====================================================================
-// The room: built-in temperature, humidity and light
+// Small screen helpers, and the light sensor
 // =====================================================================
 String vnNum(float v, int digits) {          // Vietnamese decimal comma: 31,2
   String s = String(v, digits);
@@ -2276,26 +2542,10 @@ String vnNum(float v, int digits) {          // Vietnamese decimal comma: 31,2
   return s;
 }
 
-String roomText() { return isnan(roomTemp) ? String("Đang đọc...") : vnNum(roomTemp, 1) + " °C · " + vnNum(roomHum, 0) + "%"; }
-
-void roomLoop() {
-  if (!aht || (lastRoomRead && millis() - lastRoomRead < 5000)) return;
-  lastRoomRead = millis();
-  float t = aht->getData(AHT20::eAHT20TempC), h = aht->getData(AHT20::eAHT20HumiRH);
-  if (t > -20 && t < 70 && h > 0 && h <= 100) {   // both 0 = not measured yet
-    roomTemp = t + ROOM_TEMP_OFFSET;
-    roomHum = h;
-  }
+void lightLoop() {                           // every 5 s; only used to speak more quietly at night
+  if (lastLightRead && millis() - lastLightRead < 5000) return;
+  lastLightRead = millis();
   roomLux = k10.readALS();
-  bool hot = !isnan(roomTemp) && (roomHot ? roomTemp >= HOT_ROOM_C - 0.5f : roomTemp >= HOT_ROOM_C);
-  if (hot != roomHot) { roomHot = hot; dirty = true; }
-  if (roomHot && screenNow == S_IDLE && audioIdle() && (!lastHotWarn || millis() - lastHotWarn > 2 * 3600000UL)) {
-    lastHotWarn = millis();                  // at most every 2 hours
-    showToast("Phòng nóng: uống thêm nước", C_AMBER);
-    say(V_HOT, false);
-  }
-  static unsigned long lastBle = 0;
-  if (!lastBle || millis() - lastBle > 30000) { lastBle = millis(); updateRoomBle(); }
 }
 
 // =====================================================================
@@ -2370,128 +2620,6 @@ void reminderLoop() {
 }
 
 // =====================================================================
-// Body temperature: DS18B20 probe (1-Wire, one data wire with a pull-up on its adapter board)
-// =====================================================================
-portMUX_TYPE owMux = portMUX_INITIALIZER_UNLOCKED;
-
-void owLow() { gpio_set_level((gpio_num_t)TEMP_PIN, 0); }
-void owRelease() { gpio_set_level((gpio_num_t)TEMP_PIN, 1); }   // open drain: the pull-up makes it high
-int owRead() { return gpio_get_level((gpio_num_t)TEMP_PIN); }
-
-bool owReset() {                             // true = a probe answered
-  if (TEMP_PIN < 0) return false;
-  gpio_set_direction((gpio_num_t)TEMP_PIN, GPIO_MODE_INPUT_OUTPUT_OD);
-  owLow();
-  delayMicroseconds(480);
-  portENTER_CRITICAL(&owMux);
-  owRelease();
-  delayMicroseconds(70);
-  bool there = owRead() == 0;
-  portEXIT_CRITICAL(&owMux);
-  delayMicroseconds(410);
-  return there;
-}
-
-void owWriteBit(int b) {
-  portENTER_CRITICAL(&owMux);
-  owLow();
-  delayMicroseconds(b ? 6 : 60);
-  owRelease();
-  delayMicroseconds(b ? 64 : 10);
-  portEXIT_CRITICAL(&owMux);
-}
-
-int owReadBit() {
-  portENTER_CRITICAL(&owMux);
-  owLow();
-  delayMicroseconds(3);
-  owRelease();
-  delayMicroseconds(10);
-  int b = owRead();
-  portEXIT_CRITICAL(&owMux);
-  delayMicroseconds(53);
-  return b;
-}
-
-void owWrite(uint8_t v) { for (int i = 0; i < 8; i++) owWriteBit((v >> i) & 1); }
-uint8_t owReadByte() { uint8_t v = 0; for (int i = 0; i < 8; i++) v |= owReadBit() << i; return v; }
-
-uint8_t crc8(const uint8_t* d, int n) {      // Dallas/Maxim CRC, to throw away bad reads
-  uint8_t c = 0;
-  for (int i = 0; i < n; i++)
-    for (uint8_t b = d[i], k = 0; k < 8; k++, b >>= 1) { uint8_t mix = (c ^ b) & 1; c >>= 1; if (mix) c ^= 0x8C; }
-  return c;
-}
-
-bool tempProbeThere() { return owReset(); }
-
-bool tempStartConversion() {
-  if (!owReset()) return false;
-  owWrite(0xCC);                             // the only probe on the wire
-  owWrite(0x44);                             // measure (takes up to 750 ms at 12 bits)
-  return true;
-}
-
-bool tempReadResult(float& c) {
-  if (!owReset()) return false;
-  owWrite(0xCC);
-  owWrite(0xBE);                             // read its memory
-  uint8_t d[9];
-  for (int i = 0; i < 9; i++) d[i] = owReadByte();
-  if (crc8(d, 8) != d[8]) return false;
-  int16_t raw = d[1] << 8 | d[0];
-  c = raw / 16.0f;
-  return c > -50 && c < 120 && !(raw == 0x0550);   // 85.0 °C = the power-on value, not a reading
-}
-
-Level levelTemp(float t) {                   // underarm temperature
-  if (t < 35.0f || t >= 39.0f) return ALERT;
-  if (t >= 37.5f) return ATTN;
-  return SAFE;
-}
-const char* levelWordTemp(float t) {
-  return t < 35.0f ? "Thân nhiệt thấp" : t >= 39.0f ? "Sốt cao" : t >= 37.5f ? "Sốt" : "Bình thường";
-}
-
-// One reading a second. Done when it has stopped rising: at least 60 s, and the last 30 s within 0.1 °C.
-void tempLoop() {
-  if (screenNow != S_TEMP || tempState != T_WAIT) return;
-  unsigned long now = millis();
-  if (!tempConverting) {
-    if (now - tempConvAt < 1000) return;
-    if (!tempStartConversion()) { tempState = T_NOPROBE; dirty = true; return; }
-    tempConverting = true;
-    tempConvAt = now;
-    return;
-  }
-  if (now - tempConvAt < 800) return;
-  tempConverting = false;
-  float c;
-  if (!tempReadResult(c)) return;            // a bad read: try again next second
-  tempNow = c;
-  if (tempLogN == 40) { memmove(tempLog, tempLog + 1, sizeof(float) * 39); tempLogN--; }
-  tempLog[tempLogN++] = c;
-  Serial.printf("Temperature %.2f C\n", c);
-  dirty = true;
-  unsigned long secs = (now - tempStart) / 1000;
-  bool steady = false;
-  if (tempLogN >= 30 && secs >= 60 && c >= 34.0f) {
-    float lo = 1e9, hi = -1e9;
-    for (int i = tempLogN - 30; i < tempLogN; i++) { lo = min(lo, tempLog[i]); hi = max(hi, tempLog[i]); }
-    steady = hi - lo <= 0.1f;
-  }
-  if (steady || secs >= TEMP_MAX_SECONDS) {
-    tempResult = roundf(c * 10) / 10;
-    tempState = T_DONE;
-    lastBodyTemp = tempResult;
-    lastBodyTempTime = dateTimeText();
-    logReading(0, 0, tempResult, false);
-    notifyBodyTemp(tempResult);
-    say(levelTemp(tempResult) == SAFE ? SND_OK : SND_ERR, true);
-  }
-}
-
-// =====================================================================
 // Measuring
 // =====================================================================
 void pushWave(float v) {
@@ -2509,17 +2637,11 @@ void clearMeasurement() {
 }
 
 void goTo(Screen s) {
+  if (s == S_IDLE && !signedIn) s = S_PAIR;   // nothing else until the device is signed in
+  if (s == S_PAIR && screenNow != S_PAIR) say(V_LOGIN, true);
   screenNow = s;
   stateSince = millis();
   dirty = true;
-  if (s == S_TEMP) {
-    tempLogN = 0;
-    tempNow = 0;
-    tempStart = millis();
-    tempState = tempProbeThere() ? T_WAIT : T_NOPROBE;
-    if (tempState == T_WAIT) say(V_TEMP, true);
-    else say(SND_ERR, true);
-  }
   if (s == S_PLACE) {
     clearMeasurement();
     goodStreak = 0;
@@ -2665,7 +2787,7 @@ void finishMeasurement() {
   { time_t now = time(nullptr); resultEpoch = now > 1700000000 ? (uint32_t)now : 0; }
   resultAtMs = millis();
   addHistory(resultHR, resultSpO2, resultMock);
-  logReading(resultHR, resultSpO2, 0, resultMock);
+  logReading(resultHR, resultSpO2, resultMock);
   Level lh = levelHR(resultHR), ls = levelSpO2(resultSpO2);
   Serial.printf("Result: %d bpm (%s), SpO2 %d%% (%s)%s\n", resultHR, levelWordHR(lh), resultSpO2, levelWordSpO2(ls),
                 resultMock ? " [mock]" : "");
@@ -2748,11 +2870,22 @@ void startMeasuring() {
 
 void menuChoose() {
   switch (menuSel) {
-    case 0: goTo(S_TEMP); break;
-    case 1: goTo(S_HISTORY); break;
-    case 2: qrToGeneSense = true; goTo(S_QR); break;
-    case 3: goTo(S_INFO); break;
-    case 4: goTo(S_WIFISETUP); startSetup(); break;
+    case 0: goTo(S_HISTORY); break;
+    case 1: qrToGeneSense = true; goTo(S_QR); break;
+    case 2: goTo(S_INFO); break;
+    case 3: goTo(S_WIFISETUP); startSetup(); break;
+    case MENU_LOGOUT:
+      if (millis() < logoutConfirmUntil) {
+        logoutConfirmUntil = 0;
+        signedIn = false;
+        logoutRequested = true;              // the sending task tells the server and forgets the account
+        goTo(S_IDLE);                        // = the sign-in screen
+      } else {
+        logoutConfirmUntil = millis() + 3500;
+        showToast("Bấm A lần nữa để đăng xuất", C_AMBER);
+        say(SND_BEEP, true);
+      }
+      break;
     case MENU_CLEAR:
       if (millis() < clearConfirmUntil) {
         clearHistory();
@@ -2802,6 +2935,12 @@ void onButton(int which) {                   // 1 = A, 2 = B, 3 = A+B
       if (which == 1) qrToGeneSense = !qrToGeneSense;
       else if (which == 2) goTo(S_IDLE);
       break;
+    case S_PAIR:
+      if (which == 1) {
+        if (!wifiSsid.length() || WiFi.status() != WL_CONNECTED) { goTo(S_WIFISETUP); startSetup(); }
+        else { xSemaphoreTake(histLock, portMAX_DELAY); pairDeviceCode = pairCode = pairUrl = ""; xSemaphoreGive(histLock); dirty = true; }   // a new code
+      }
+      break;
     case S_REMIND:
       if (which == 1) startMeasuring();
       else if (which == 2) {
@@ -2814,10 +2953,6 @@ void onButton(int which) {                   // 1 = A, 2 = B, 3 = A+B
       break;
     case S_INFO:
       if (which == 2) goTo(S_IDLE);
-      break;
-    case S_TEMP:
-      if (which == 1) goTo(S_TEMP);          // measure again
-      else if (which == 2) goTo(S_IDLE);
       break;
     case S_WIFISETUP:
       if (which == 2) { stopSetup(); goTo(S_IDLE); }
@@ -2926,9 +3061,11 @@ void setup() {
     if (!greenIsOn()) powerOff();            // switched off: sleep straight away
   }
   prefs.begin("gsk10", false);
+  histLock = xSemaphoreCreateMutex();
+  tlsLock = xSemaphoreCreateMutex();
   loadHistory();
+  loadAccount();
   loadReminders();
-  aht = new AHT20();                         // the board's own temperature/humidity sensor (reads every second)
   startSD();
 
   startStorage();
@@ -2937,7 +3074,8 @@ void setup() {
   startBluetooth();
   startWifi();
   goTo(S_IDLE);
-  say(V_WELCOME, false);
+  if (signedIn) say(V_WELCOME, false);
+  xTaskCreatePinnedToCore(cloudTask, "cloud", 12 * 1024, nullptr, 1, nullptr, 0);
 }
 
 void loop() {
@@ -2946,8 +3084,23 @@ void loop() {
   greenLoop();
   if (sensorOk) sensorLoop(); else mockLoop();
   measureLoop();
-  tempLoop();
-  roomLoop();
+  lightLoop();
+  if (pairJustDone) {
+    pairJustDone = false;
+    say(SND_OK, true);
+    showToast("Xin chào, " + accountText(), C_GREEN);
+    if (screenNow == S_PAIR) goTo(S_IDLE);
+    say(V_WELCOME, false);
+  }
+  if (accountRevoked) {
+    accountRevoked = false;
+    showToast("Máy đo đã bị ngắt khỏi tài khoản", C_AMBER);
+    if (screenNow == S_IDLE || screenNow == S_MENU || screenNow == S_INFO || screenNow == S_HISTORY) goTo(S_IDLE);
+  }
+  if (readingSaved) {
+    readingSaved = false;
+    if (screenNow == S_RESULT || screenNow == S_EMERGENCY) showToast("Đã lưu vào hồ sơ GeneSense", C_GREEN);
+  }
   reminderLoop();
   wifiLoop();
   ledLoop();
@@ -2955,7 +3108,7 @@ void loop() {
   if (bleWasConnected != bleConnected) { dirty = true; Serial.println(bleConnected ? "Phone connected" : "Phone disconnected"); }
   bleWasConnected = bleConnected;
 
-  bool fast = screenNow == S_TEMP || screenNow == S_PLACE || screenNow == S_MEASURE || screenNow == S_EMERGENCY;
+  bool fast = screenNow == S_PLACE || screenNow == S_MEASURE || screenNow == S_EMERGENCY;
   if (dirty || millis() - lastFrame >= (fast ? 40UL : 200UL)) {
     dirty = false;
     lastFrame = millis();

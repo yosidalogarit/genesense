@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,14 +20,15 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .auth import current_user, public_user, router as auth_router
 from .care import current_vital_score, router as care_router, weekly_bp_summary
 from .config import get_settings
+from .devices import current_device, router as devices_router
 from .database import engine, get_session
 from .migrations import migrate_schema
-from .models import Assessment, Avatar, Feedback, MedicalRecord, Medication, MedicationIntake, User
+from .models import Assessment, Avatar, Device, Feedback, MedicalRecord, Medication, MedicationIntake, User
 from .schemas import (AccountProfile, AssessmentCreate, AssessmentHistoryItem, AssessmentResult,
                       FeedbackCreate, FeedbackResult, MedicalDocumentAnalyzeResult,
                       MedicalRecordCreate, MedicalRecordResult, MeasurementCreate,
                       MedicationInput, MedicationIntakeResult, MedicationIntakeUpdate, MedicationResult,
-                      WeeklyBloodPressureSummary)
+                      VitalSample, WeeklyBloodPressureSummary)
 from .services.ai_service import AIInsightService
 from .services.risk_engine import calculate_risk, risk_overview
 
@@ -101,6 +103,7 @@ async def privacy_and_csrf(request: Request, call_next):
 
 app.include_router(auth_router)
 app.include_router(care_router)
+app.include_router(devices_router)
 
 
 @app.get("/api/health")
@@ -163,6 +166,35 @@ async def get_risk(user: User = Depends(current_user), session: AsyncSession = D
 @app.post("/api/assessments", response_model=AssessmentResult, status_code=201)
 async def create_assessment(measurement: MeasurementCreate, user: User = Depends(current_user),
                             session: AsyncSession = Depends(get_session)):
+    return await save_measurement(measurement, user, session)
+
+
+class DeviceReadingCreate(BaseModel):
+    """One finished reading from a linked GeneSense device. `measured_at` is Unix seconds (left out without a clock)."""
+    heart_rate: float | None = Field(default=None, ge=20, le=260)
+    spo2: float | None = Field(default=None, ge=50, le=100)
+    measured_at: int | None = None
+    client_id: str = Field(min_length=36, max_length=36, pattern=r"^[0-9a-fA-F-]{36}$")
+
+
+@app.post("/api/devices/readings", status_code=201)
+async def device_reading(payload: DeviceReadingCreate, device: Device = Depends(current_device),
+                         session: AsyncSession = Depends(get_session)):
+    if payload.heart_rate is None and payload.spo2 is None:
+        raise HTTPException(422, "Chưa có chỉ số nào.")
+    try:
+        timestamp = datetime.fromtimestamp(payload.measured_at, timezone.utc) if payload.measured_at else None
+        measurement = MeasurementCreate(source="device", client_id=payload.client_id, vitals=VitalSample(
+            heart_rate=payload.heart_rate, spo2=payload.spo2, timestamp=timestamp))
+    except (ValidationError, ValueError, OverflowError, OSError):
+        raise HTTPException(422, "Thời gian ghi nhận không hợp lệ.")
+    user = await session.get(User, device.user_id)
+    device.last_seen_at = datetime.now(timezone.utc)  # committed with the reading
+    result = await save_measurement(measurement, user, session)
+    return {"id": result.id, "risk_level": result.risk_level}
+
+
+async def save_measurement(measurement: MeasurementCreate, user: User, session: AsyncSession) -> AssessmentResult:
     if not user.onboarding_completed or not user.health_profile:
         raise HTTPException(409, "Hãy hoàn thành hồ sơ sức khỏe trước lần theo dõi đầu tiên.")
     if measurement.client_id:

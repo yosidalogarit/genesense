@@ -57,5 +57,9 @@ export const api = {
   setMedicationIntake: (id, slot, body) => request(`/api/medications/${encodeURIComponent(id)}/intakes/${encodeURIComponent(slot)}`, { method: "PUT", body: JSON.stringify(body) }),
   saveMedication: (body, id) => request("/api/medications" + (id ? "/" + encodeURIComponent(id) : ""), { method: id ? "PUT" : "POST", body: JSON.stringify(body) }),
   deleteMedication: id => request(`/api/medications/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  devices: () => request("/api/devices"),
+  devicePairInfo: code => request(`/api/devices/pair/${encodeURIComponent(code)}`),
+  devicePairApprove: code => request("/api/devices/pair/approve", { method: "POST", body: JSON.stringify({ code }) }),
+  removeDevice: id => request(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
   deleteMedicalRecord: id => request(`/api/medical-records/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

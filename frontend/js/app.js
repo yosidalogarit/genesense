@@ -494,6 +494,7 @@ async function nextStep(event) {
     navigate(wasEditing ? state.editReturn : "dashboard");
     toast(wasEditing ? "Đã lưu hồ sơ." : "Đã lưu hồ sơ. Bạn có thể ghi chỉ số đầu tiên.");
     offerDeviceImport();
+    void offerDevicePair();
   } catch (error) { errorAt("#onboarding-error", error.message); }
   finally { button.disabled = false; button.innerHTML = original; }
 }
@@ -1122,6 +1123,7 @@ async function exitViewing() {
   navigate("dashboard");
   refreshCare();
   offerDeviceImport();
+  void offerDevicePair();
 }
 
 function analysisMarkup(analysis) {
@@ -1789,6 +1791,104 @@ function offerDeviceImport() {
   errorAt("#device-import-error");
   openDialog(dialog);
 }
+// A GeneSense device (the UNIHIKER K10) signs in to an account with "#ket-noi-may?ma=ABCD2345":
+// it shows this as a QR code next to the same code in large letters. Nothing is linked until the person,
+// in their own account, taps "Kết nối"; the device then sends each finished reading to this profile.
+const DEVICE_PAIR_ROUTE = "ket-noi-may";
+const DEVICE_PAIR_KEY = "genesense-device-pair";
+const pairCode = value => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const validPairCode = code => /^[A-Z0-9]{8}$/.test(code);
+function takeDevicePairFromLink() {
+  const hash = location.hash;
+  if (hash.startsWith("#" + DEVICE_PAIR_ROUTE)) {
+    window.history.replaceState(null, "", location.pathname + location.search);
+    const query = hash.indexOf("?");
+    const code = query < 0 ? "" : pairCode(new URLSearchParams(hash.slice(query + 1)).get("ma"));
+    state.devicePair = validPairCode(code) ? code : null;
+    state.devicePairBad = !state.devicePair;
+    try { if (state.devicePair) sessionStorage.setItem(DEVICE_PAIR_KEY, state.devicePair); else sessionStorage.removeItem(DEVICE_PAIR_KEY); } catch {}
+    return;
+  }
+  // Coming back from Google sign-in: the code waited in this tab's session storage.
+  if (!state.devicePair) {
+    try { const saved = sessionStorage.getItem(DEVICE_PAIR_KEY); if (validPairCode(saved || "")) state.devicePair = saved; } catch {}
+  }
+}
+function clearDevicePair() {
+  state.devicePair = null;
+  try { sessionStorage.removeItem(DEVICE_PAIR_KEY); } catch {}
+}
+async function offerDevicePair() {
+  if (!state.user) { if (state.devicePair) errorAt("#login-message", "Đăng nhập để kết nối máy đo với hồ sơ của bạn."); return; }
+  if (state.viewing && state.devicePair) { toast("Quay về hồ sơ của bạn để kết nối máy đo."); return; }
+  if (!state.health || state.viewing || $("#app-screen").classList.contains("hidden")) return;
+  if (state.devicePairBad) { state.devicePairBad = false; toast("Mã kết nối máy đo không hợp lệ. Hãy quét lại mã trên máy đo.", "error"); }
+  const code = state.devicePair;
+  if (!code || $("#device-pair-dialog").open) return;
+  const epoch = state.authEpoch;
+  try {
+    const info = await api.devicePairInfo(code);
+    if (epoch !== state.authEpoch) return;
+    showDevicePair(code, info.device_name);
+  } catch (error) { clearDevicePair(); toast(error.message, "error"); }
+}
+function showDevicePair(code, deviceName) {
+  state.devicePair = code;
+  $("#device-pair-name").textContent = deviceName;
+  $("#device-pair-code").textContent = "Mã " + code.slice(0, 4) + " " + code.slice(4);
+  $("#device-pair-text").textContent = "Sau mỗi lần đo, máy sẽ tự gửi nhịp tim và SpO₂ vào hồ sơ của " + (state.user?.display_name || "bạn") + ".";
+  errorAt("#device-pair-error");
+  openDialog($("#device-pair-dialog"));
+}
+async function confirmDevicePair() {
+  const code = state.devicePair;
+  if (!code || state.busy) return;
+  const button = $("#device-pair-confirm"), epoch = state.authEpoch;
+  state.busy = true; button.disabled = true;
+  errorAt("#device-pair-error");
+  try {
+    const result = await api.devicePairApprove(code);
+    if (epoch !== state.authEpoch) return;
+    closeDialog($("#device-pair-dialog"));
+    toast("Đã kết nối " + result.device_name + ". Màn hình máy đo sẽ hiện tên bạn sau vài giây.");
+    // The device collects its key within a few seconds (it asks every 5 s); only then is it in the list.
+    for (const wait of [6000, 12000]) setTimeout(() => { if (epoch === state.authEpoch) void refreshDevices(); }, wait);
+  } catch (error) { errorAt("#device-pair-error", error.message); }
+  finally { state.busy = false; button.disabled = false; }
+}
+async function pairDeviceByCode(event) {
+  event.preventDefault();
+  const code = pairCode($("#device-pair-input").value);
+  if (!validPairCode(code)) { errorAt("#device-pair-form-error", "Mã gồm 8 chữ và số, như trên màn hình máy đo."); return; }
+  errorAt("#device-pair-form-error");
+  try { showDevicePair(code, (await api.devicePairInfo(code)).device_name); $("#device-pair-input").value = ""; }
+  catch (error) { errorAt("#device-pair-form-error", error.message); }
+}
+async function refreshDevices() {
+  const epoch = state.authEpoch;
+  try {
+    const devices = await api.devices();
+    if (epoch !== state.authEpoch) return;
+    state.devices = devices;
+  } catch { /* the device list is optional; the rest of the app still works */ }
+  renderDevices();
+}
+function renderDevices() {
+  const devices = state.devices || [];
+  $("#devices-panel").innerHTML = "<h2>Máy đo GeneSense</h2>" +
+    '<p class="note">Máy đo đã kết nối tự gửi nhịp tim và SpO₂ vào hồ sơ này sau mỗi lần đo.</p>' +
+    (devices.length ? '<div class="care-rows">' + devices.map(d => '<div class="care-row"><div class="care-row-main"><strong>' + esc(d.name) +
+      '</strong><span class="note">Kết nối từ ' + esc(date(d.created_at, false)) + (d.last_seen_at ? ", gửi gần nhất lúc " + esc(date(d.last_seen_at)) : "") +
+      '</span></div><button class="delete-record" data-remove-device="' + esc(d.id) + '">Ngắt kết nối</button></div>').join("") + "</div>"
+      : '<p class="note">Chưa có máy đo nào. Bật máy đo, rồi quét mã QR trên màn hình bằng điện thoại.</p>') +
+    '<form id="device-pair-form" class="care-form"><label>Hoặc nhập mã trên màn hình máy đo<input id="device-pair-input" autocomplete="off" autocapitalize="characters" maxlength="16" required></label><button class="btn primary" type="submit">Kết nối</button></form>' +
+    '<p id="device-pair-form-error" class="inline-message error hidden" role="alert"></p>';
+}
+async function removeDevice(id) {
+  if (!await confirmAction("Ngắt kết nối máy đo?", "Máy đo sẽ không gửi chỉ số vào hồ sơ này nữa. Các lần đo đã lưu vẫn còn.", "Ngắt kết nối")) return;
+  try { await api.removeDevice(id); await refreshDevices(); toast("Đã ngắt kết nối máy đo."); }
+  catch (error) { toast(error.message, "error"); }
+}
 // The readings of one value saved before this one, oldest first (at most 6, as many as fit a small chart).
 function importHistory(key, takenAt) {
   return state.records.filter(row => row.vitals?.[key] != null && toDate(row.created_at) < takenAt).slice(0, 6).reverse();
@@ -1945,6 +2045,7 @@ function clearAccount() {
   if (state.scanUrl) URL.revokeObjectURL(state.scanUrl);
   state.scanUrl = null; $("#scan-image").removeAttribute("src"); $("#scan-save").removeAttribute("href");
   reportLayer = false;
+  state.devices = null;
   state.user = null; state.health = null; state.records = []; state.result = null; state.risk = null; state.weeklyBP = null; state.riskFailed = false; state.medicalRecords = []; state.medications = []; state.medicationIntakes = null; state.pendingAssessments = []; state.viewingMedications = null; state.recordsTab = null; state.historyAll = false; state.editing = false; state.rating = 0;
   renderSyncStatus();
   resetMedicalUpload();
@@ -1993,10 +2094,11 @@ async function enterAccount(user) {
   } else {
     personalize(); screen("app");
     loadAvatar();
-    await Promise.all([refreshRecords(), refreshMedicalRecords(), refreshMedications(), refreshCare(), refreshRisk()]);
+    await Promise.all([refreshRecords(), refreshMedicalRecords(), refreshMedications(), refreshCare(), refreshRisk(), refreshDevices()]);
     navigate(location.hash.slice(1) || "dashboard");
     void syncPendingAssessments();
     offerDeviceImport();
+    void offerDevicePair();
   }
 }
 async function boot() {
@@ -2021,7 +2123,7 @@ async function boot() {
     if (user) await enterAccount(user);
     else {
       screen("login");
-      if (!loginError) offerDeviceImport();
+      if (!loginError) { offerDeviceImport(); void offerDevicePair(); }
     }
   } catch (error) {
     $("#loading-screen p").textContent = error.message;
@@ -2147,6 +2249,8 @@ function bindEvents() {
     const removeTarget = event.target.closest("[data-remove-link]");
     if (removeTarget) removeCareLink(removeTarget.dataset.removeLink, removeTarget.dataset.removeKind);
     if (event.target.closest("#care-create")) createCareCode();
+    const removeDeviceTarget = event.target.closest("[data-remove-device]");
+    if (removeDeviceTarget) removeDevice(removeDeviceTarget.dataset.removeDevice);
     if (event.target.closest("#exit-viewing")) exitViewing();
     if (event.target.closest("[data-open-measurement]")) openMeasurement();
     if (event.target.closest("#history-add")) openMeasurement();
@@ -2158,7 +2262,14 @@ function bindEvents() {
     else if (event.target.closest("[data-edit-hereditary]")) editProfile(LAST_STEP);
   });
   $("#edit-profile").addEventListener("click", () => editProfile());
-  document.addEventListener("submit", event => { if (event.target.id === "care-form") acceptCareCode(event); });
+  document.addEventListener("submit", event => {
+    if (event.target.id === "care-form") acceptCareCode(event);
+    if (event.target.id === "device-pair-form") pairDeviceByCode(event);
+  });
+  $("#device-pair-confirm").addEventListener("click", confirmDevicePair);
+  $("#device-pair-skip").addEventListener("click", () => closeDialog($("#device-pair-dialog")));
+  // However the dialog closes without connecting, the code is dropped so it does not ask again.
+  $("#device-pair-dialog").addEventListener("close", clearDevicePair);
   $$("dialog").forEach(dialog => dialog.addEventListener("cancel", event => { event.preventDefault(); closeDialog(dialog); }));
   $("#delete-assessment").addEventListener("click", event => deleteAssessment(event.currentTarget.dataset.id));
   $("#new-measurement").addEventListener("click", () => openMeasurement());
@@ -2265,6 +2376,7 @@ function bindEvents() {
   // Links like the header logo only change the hash; route on every hash change (also back/forward).
   window.addEventListener("hashchange", () => {
     if (location.hash.startsWith("#" + DEVICE_IMPORT_ROUTE)) { takeDeviceImportFromLink(); offerDeviceImport(); return; }
+    if (location.hash.startsWith("#" + DEVICE_PAIR_ROUTE)) { takeDevicePairFromLink(); void offerDevicePair(); return; }
     if (state.user && state.health) navigate(location.hash.slice(1) || "dashboard");
   });
   $("#device-import-save").addEventListener("click", saveDeviceImport);
@@ -2293,6 +2405,7 @@ function bindEvents() {
 }
 hydrateIcons();
 takeDeviceImportFromLink();
+takeDevicePairFromLink();
 bindEvents();
 try { applyGlass(localStorage.getItem("genesense-glass") !== "off"); } catch { applyGlass(true); }
 if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});

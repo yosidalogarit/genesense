@@ -698,3 +698,65 @@ def test_care_invite_expiry_replacement_and_rate_limit(client):
     for _ in range(3):
         assert client.post("/api/care/links", json={"code": "WRONGCODE"}).status_code == 404
     assert client.post("/api/care/links", json={"code": "WRONGCODE"}).status_code == 429
+
+
+def test_device_pairs_by_code_then_sends_readings_with_its_token(client):
+    device = TestClient(main.app, base_url="http://localhost:8000", headers=HEADERS)  # no account cookie
+    start = device.post("/api/devices/pair", json={"name": "GeneSense-K10"})
+    assert start.status_code == 201
+    pairing = start.json()
+    assert pairing["verification_url"].endswith("/#ket-noi-may?ma=" + pairing["user_code"])
+    assert device.post("/api/devices/pair/token", json={"device_code": pairing["device_code"]}).status_code == 202
+
+    login(client)
+    spaced = pairing["user_code"][:4].lower() + " " + pairing["user_code"][4:]
+    assert client.post("/api/devices/pair/approve", json={"code": spaced}).status_code == 409   # profile first
+    client.put("/api/profile", json=PROFILE)
+    assert client.get("/api/devices/pair/" + pairing["user_code"]).json() == {"device_name": "GeneSense-K10"}
+    assert client.post("/api/devices/pair/approve", json={"code": spaced}).status_code == 200
+
+    token_reply = device.post("/api/devices/pair/token", json={"device_code": pairing["device_code"]})
+    assert token_reply.status_code == 200 and token_reply.json()["display_name"] == PROFILE["display_name"]
+    token = token_reply.json()["token"]
+    # The token is handed out once.
+    assert device.post("/api/devices/pair/token", json={"device_code": pairing["device_code"]}).status_code == 404
+
+    auth_header = {"Authorization": "Bearer " + token}
+    assert device.get("/api/devices/me", headers=auth_header).json()["display_name"] == PROFILE["display_name"]
+    taken = int((datetime.now(timezone.utc) - timedelta(minutes=2)).timestamp())
+    reading = {"heart_rate": 77, "spo2": 97, "measured_at": taken, "client_id": str(uuid4())}
+    first = device.post("/api/devices/readings", json=reading, headers=auth_header)
+    again = device.post("/api/devices/readings", json=reading, headers=auth_header)
+    assert first.status_code == 201 and again.json()["id"] == first.json()["id"]
+    history = client.get("/api/assessments").json()
+    assert len(history) == 1 and history[0]["vitals"]["source"] == "device"
+    assert history[0]["created_at"].startswith(datetime.fromtimestamp(taken, timezone.utc).strftime("%Y-%m-%dT%H:%M"))
+    future = reading | {"client_id": str(uuid4()), "measured_at": taken + 3600}
+    assert device.post("/api/devices/readings", json=future, headers=auth_header).status_code == 422
+
+    listed = client.get("/api/devices").json()
+    assert [d["name"] for d in listed] == ["GeneSense-K10"] and listed[0]["last_seen_at"]
+    assert client.delete("/api/devices/" + listed[0]["id"]).status_code == 204
+    assert device.get("/api/devices/me", headers=auth_header).status_code == 401
+    assert device.post("/api/devices/readings", json=reading, headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_device_signs_itself_out(client):
+    device = TestClient(main.app, base_url="http://localhost:8000", headers=HEADERS)
+    pairing = device.post("/api/devices/pair", json={}).json()
+    login(client)
+    client.put("/api/profile", json=PROFILE)
+    client.post("/api/devices/pair/approve", json={"code": pairing["user_code"]})
+    token = device.post("/api/devices/pair/token", json={"device_code": pairing["device_code"]}).json()["token"]
+    auth_header = {"Authorization": "Bearer " + token}
+    assert device.delete("/api/devices/me", headers=auth_header).status_code == 204
+    assert device.get("/api/devices/me", headers=auth_header).status_code == 401
+    assert client.get("/api/devices").json() == []
+
+
+def test_wrong_device_codes_are_limited(client):
+    login(client)
+    client.put("/api/profile", json=PROFILE)
+    for _ in range(5):
+        assert client.post("/api/devices/pair/approve", json={"code": "ZZZZ9999"}).status_code == 404
+    assert client.post("/api/devices/pair/approve", json={"code": "ZZZZ9999"}).status_code == 429

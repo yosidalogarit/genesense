@@ -219,6 +219,7 @@
         <div id="profile-content"></div>
         <input type="file" id="avatar-file" accept="image/*" hidden>
         <article id="care-panel" class="panel own-only"></article>
+        <article id="devices-panel" class="panel own-only"></article>
         <article class="panel"><h2>Hiển thị</h2><label class="check-label setting-row"><input type="checkbox" id="glass-setting" checked><span>Hiệu ứng kính mờ</span></label></article>
         <article class="panel feedback-card own-only"><details class="feedback-fold"><summary><h2>Góp ý</h2><span data-icon="chevron"></span></summary><form id="feedback-form"><fieldset class="rating"><legend>Mức độ hài lòng, từ 1 (thấp) đến 5 (cao)</legend><div id="rating-buttons"></div></fieldset><label>Nội dung góp ý<textarea id="feedback-message" rows="3" maxlength="2000"></textarea></label><button class="btn outline" type="submit">Gửi góp ý</button></form></details></article>
         <button type="button" id="logout" class="btn outline signout own-only">Đăng xuất</button>
@@ -244,6 +245,13 @@
     <p class="note">So với số trên màn hình máy đo trước khi lưu.</p>
     <p id="device-import-error" class="inline-message warning hidden" role="alert"></p>
     <div class="dialog-actions sticky-actions"><button class="btn outline" id="device-import-skip">Bỏ qua</button><button class="btn primary" id="device-import-save">Lưu chỉ số</button></div>
+  </dialog>
+  <dialog id="device-pair-dialog" aria-labelledby="device-pair-title"><div class="dialog-heading"><h2 id="device-pair-title">Kết nối máy đo</h2><button class="icon-button" data-close="device-pair-dialog" aria-label="Đóng"><span data-icon="close"></span></button></div>
+    <div class="import-source"><span class="metric-icon" data-icon="chart"></span><div><strong id="device-pair-name">Máy đo GeneSense</strong><span id="device-pair-code"></span></div></div>
+    <p id="device-pair-text"></p>
+    <p class="note">Kiểm tra mã này giống mã trên màn hình máy đo. Bạn có thể ngắt kết nối bất cứ lúc nào trong Hồ sơ.</p>
+    <p id="device-pair-error" class="inline-message warning hidden" role="alert"></p>
+    <div class="dialog-actions"><button class="btn outline" id="device-pair-skip">Bỏ qua</button><button class="btn primary" id="device-pair-confirm">Kết nối</button></div>
   </dialog>
   <dialog id="result-dialog"><div class="dialog-heading"><h2>Chi tiết lần đo</h2><button class="icon-button" data-close="result-dialog" aria-label="Đóng"><span data-icon="close"></span></button></div><div id="result-detail"></div><div class="record-actions own-only"><button id="delete-assessment" class="delete-record">Xóa lần đo này</button></div></dialog>
   <dialog id="medicine-dialog" aria-labelledby="medicine-title"><div class="dialog-heading"><h2 id="medicine-title">Thêm thuốc</h2><button type="button" class="icon-button" data-close="medicine-dialog" aria-label="Đóng"><span data-icon="close"></span></button></div>
