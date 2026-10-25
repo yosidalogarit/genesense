@@ -100,7 +100,7 @@ The owner has a small ESP32-S3 board with a screen and a speaker that now acts a
 
 ### UNIHIKER K10 measuring device (owner's hardware, October 2026)
 
-The owner's main demo device is now a DFRobot **UNIHIKER K10** (ESP32-S3, 240×320 screen, speaker, buttons A and B, accelerometer). Its sketch is the owner's own copy and is **not in this repository**.
+The owner's main demo device is now a DFRobot **UNIHIKER K10** (ESP32-S3, 240×320 screen, speaker, buttons A and B, accelerometer). Its sketch, the font generator and a full handoff (wiring, Arduino settings, and the root causes of past power and Wi-Fi bugs) are in `hardware/genesense-k10/`; the owner also keeps a working copy in their Arduino folder.
 
 - **Arduino setup:** board package "unihiker" from `https://downloadcd.dfrobot.com.cn/UNIHIKER/package_unihiker_index.json`, board **unihiker k10**, PSRAM **OPI PSRAM**, partition **16M Flash (3MB APP/9.9MB FATFS)**, Model **None**, USB CDC On Boot **Enabled** for the Serial Monitor.
 - **Sensor:** DFRobot **SEN0518** (MAX30102 with its own processor that outputs heart rate and SpO₂, about every 4 s) on the K10's I²C port, switch set to I2C, address 0x57. Without it the sketch falls back to clearly labelled mock values.
