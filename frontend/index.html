@@ -110,6 +110,7 @@
         <button data-nav="dashboard" class="active"><span class="nav-item-icon" data-icon="grid"></span><span class="nav-item-label">Hôm nay</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="history"><span class="nav-item-icon" data-icon="chart"></span><span class="nav-item-label">Lịch sử đo</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="genetics"><span class="nav-item-icon" data-icon="family"></span><span class="nav-item-label">Di truyền</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
+        <button data-nav="assistant" class="own-only"><span class="nav-item-icon" data-icon="heart"></span><span class="nav-item-label">Trợ lý AI</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="records" class="own-only"><span class="nav-item-icon" data-icon="pill"></span><span class="nav-item-label">Thuốc</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="profile"><span class="nav-item-icon" data-icon="user"></span><span class="nav-item-label">Hồ sơ</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
       </nav>
@@ -130,6 +131,7 @@
           <div class="emergency-actions"><a class="btn emergency-call" href="tel:115">Gọi cấp cứu 115</a><button class="btn emergency-secondary own-only" data-open-measurement>Đo lại</button></div>
         </div>
 
+        <div class="dashboard-feature-grid">
         <div class="dashboard-overview">
         <article id="status-panel" class="panel status-panel">
           <p class="status-label">Tình trạng theo số đo gần nhất của bạn</p>
@@ -148,6 +150,9 @@
             <button class="link-button" data-nav="genetics">Xem nguy cơ theo từng bệnh</button>
           </details>
         </article>
+        </div>
+
+        <button class="assistant-entry panel own-only" type="button" data-nav="assistant"><span class="assistant-entry-icon" data-icon="heart"></span><span><strong>Trợ lý AI</strong><small>Đối chiếu thông tin trong hồ sơ của bạn</small></span><span data-icon="chevron"></span></button>
         </div>
 
         <section class="section" aria-labelledby="latest-title">
@@ -179,7 +184,7 @@
             <article class="panel trend-card" data-trend="spo2"><div class="trend-head"><h3>Oxy trong máu <small>SpO₂, %</small></h3><p class="trend-latest"></p></div><div class="trend-chart" tabindex="0" aria-describedby="trend-spo2-summary"></div><p class="trend-empty note">Chưa có lần đo SpO₂.</p><p id="trend-spo2-summary" class="visually-hidden"></p></article>
             <article class="panel trend-card" data-trend="glucose"><div class="trend-head"><h3>Đường huyết <small>mg/dL</small></h3><p class="trend-latest"></p></div><div class="trend-chart" tabindex="0" aria-describedby="trend-glucose-summary"></div><p class="trend-empty note">Chưa có lần đo đường huyết.</p><p id="trend-glucose-summary" class="visually-hidden"></p></article>
           </div>
-          <p class="note">Nền xanh: ngưỡng an toàn. Nét chấm: ngưỡng cao. ▲: vượt ngưỡng.</p>
+          <p id="chart-legend-note" class="note hidden">Nền xanh: ngưỡng an toàn. Nét chấm: ngưỡng cao. ▲: vượt ngưỡng.</p>
           <p id="chart-context" class="note"></p>
           <article id="weekly-bp-summary" class="panel weekly-bp-summary" aria-live="polite"></article>
         </section>
@@ -195,6 +200,27 @@
         <button type="button" class="link-button back-to-profile" data-nav="profile"><span data-icon="back"></span>Hồ sơ</button>
         <div class="page-heading"><div><h1>Di truyền</h1><p id="genetics-lead" class="lead" aria-live="polite"></p></div></div>
         <div id="genetics-content"></div>
+      </section>
+
+      <section id="assistant-view" class="view hidden">
+        <div class="page-heading"><div><h1>Trợ lý AI</h1><p class="lead">Tổng hợp hồ sơ, chỉ số, thuốc và tiền sử gia đình để bạn hiểu điều cần trao đổi với bác sĩ.</p></div></div>
+        <div class="assistant-layout">
+          <form id="assistant-form" class="panel assistant-form">
+            <div class="section-heading"><h2>Dữ liệu sẽ dùng</h2></div>
+            <div id="assistant-sources" class="assistant-sources"></div>
+            <p class="note">Dữ liệu tự nhập và nội dung đọc từ ảnh có thể sai. Ghi chú, giấy tờ có thể chứa thông tin cá nhân; hãy kiểm tra trước khi gửi.</p>
+            <label>Muốn xem kỹ phần nào?<select id="assistant-focus"><option value="overview">Toàn bộ hồ sơ</option><option value="family">Tiền sử gia đình</option><option value="readings">Các chỉ số</option><option value="documents">Giấy tờ</option><option value="medications">Thuốc đang dùng</option></select></label>
+            <label><span class="assistant-label-line">Câu hỏi của bạn <small>(không bắt buộc)</small></span><textarea id="assistant-question" rows="3" maxlength="500" placeholder="Ví dụ: Tôi nên hỏi bác sĩ điều gì về tiền sử gia đình?"></textarea></label>
+            <label class="check-label assistant-consent"><input id="assistant-consent" type="checkbox"><span>Tôi đồng ý gửi dữ liệu sức khỏe nêu trên và câu hỏi tới <strong id="assistant-provider">AI</strong> để phân tích lần này. Không gửi ảnh gốc.</span></label>
+            <p id="assistant-unavailable" class="inline-message warning hidden">Trợ lý AI chưa được cấu hình trên bản web này. Hồ sơ của bạn vẫn được lưu bình thường.</p>
+            <p id="assistant-error" class="inline-message error hidden" role="alert"></p>
+            <button id="assistant-run" type="submit" class="btn primary full-width">Phân tích hồ sơ</button>
+          </form>
+          <div class="assistant-output">
+            <section id="assistant-result" class="panel assistant-result" aria-live="polite"><h2>Kết quả</h2><p class="note">Chọn nội dung rồi nhấn Phân tích hồ sơ. Trợ lý chỉ dùng dữ liệu bạn đã lưu.</p></section>
+            <section class="panel assistant-history"><h2>Lịch sử phân tích</h2><div id="assistant-history"><p class="note">Chưa có bản phân tích.</p></div></section>
+          </div>
+        </div>
       </section>
 
       <section id="records-view" class="view hidden">

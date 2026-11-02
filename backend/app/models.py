@@ -61,6 +61,17 @@ class Assessment(Base):
     result: Mapped[dict] = mapped_column(JSON)
 
 
+class ClinicalReview(Base):
+    """Account-owned AI summaries; source images are not copied here."""
+
+    __tablename__ = "clinical_reviews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    result: Mapped[dict] = mapped_column(JSON)
+
+
 class Feedback(Base):
     __tablename__ = "feedback"
 
