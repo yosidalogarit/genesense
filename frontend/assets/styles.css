@@ -750,6 +750,10 @@ body.viewing .own-only { display: none !important; }
 @media (max-width: 760px) {
   .site-header-inner { padding: 10px 16px; min-height: 60px; }
   .app-site-header .site-header-inner { padding: 10px 16px; min-height: 60px; }
+  .app-site-header .brand { gap: 8px; }
+  .app-site-header .brand img { width: 30px; height: 30px; }
+  .app-site-header .brand strong { font-size: 1rem; }
+  .app-site-header .avatar { width: 34px; height: 34px; font-size: .9rem; }
   .brand small, .header-account .header-name { display: none; }
   .page { padding: 24px 16px 104px; }
   .page-heading { flex-direction: column; align-items: stretch; }
@@ -823,8 +827,8 @@ body.viewing .own-only { display: none !important; }
   #device-import-dialog .sticky-actions { bottom: -20px; margin-bottom: -20px; padding-bottom: 20px; }
   .toast-region { bottom: 88px; }
   .mobile-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); background: rgba(255, 255, 255, .78); border-top: 1px solid #dce8f49c; -webkit-backdrop-filter: blur(22px) saturate(155%); backdrop-filter: blur(22px) saturate(155%); box-shadow: 0 -8px 28px #10264b12; padding: 6px 8px max(6px, env(safe-area-inset-bottom)); gap: 4px; }
-  .mobile-nav button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 58px; padding: 6px 0; border: 0; border-radius: 14px; background: transparent; color: var(--ink-2); font-size: .889rem; font-weight: 600; transition: color .2s ease-out, background-color .2s ease-out, transform .2s ease-out; }
-  .mobile-nav button .icon { width: 24px; height: 24px; transition: transform .22s var(--ease-out), filter .22s ease-out; }
+  .mobile-nav button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 58px; padding: 6px 0; border: 0; border-radius: 14px; background: transparent; color: var(--ink-2); font-size: .82rem; font-weight: 600; transition: color .2s ease-out, background-color .2s ease-out, transform .2s ease-out; }
+  .mobile-nav button .icon { width: 20px; height: 20px; transition: transform .22s var(--ease-out), filter .22s ease-out; }
   .mobile-nav button.active { color: var(--blue); background: #eaf2ffb8; box-shadow: inset 0 1px #ffffff; }
   .mobile-nav button.active .icon { transform: translateY(-1px) scale(1.06); filter: drop-shadow(0 3px 4px #0756ce20); }
 }
@@ -862,7 +866,7 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
 /* On phones the menu cue is just the three lines, in the logo's navy, with no box. */
 @media (max-width: 760px) {
   .menu-cue { min-width: 44px; min-height: 44px; justify-content: center; padding: 0; border: 0; background: transparent; color: var(--navy); }
-  .menu-cue .icon { width: 26px; height: 26px; }
+  .menu-cue .icon { width: 21px; height: 21px; }
   .menu-cue-text { display: none; }
 }
 /* Amber hint under a measuring field whose value is outside the usual range. */
