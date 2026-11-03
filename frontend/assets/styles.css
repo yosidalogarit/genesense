@@ -809,6 +809,15 @@ body.viewing .own-only { display: none !important; }
   .login-symbol { display: none; }
   .login-card { padding: 24px 16px; }
   .onboarding-form { padding: 20px 16px; }
+  .onboarding-page { padding-top: 16px; }
+  .onboarding-page h1 { font-size: 1.32rem; line-height: 1.22; }
+  .onboarding-page .lead { font-size: .92rem; }
+  .onboarding-form { margin-top: 16px; }
+  .onboarding-form h2 { font-size: 1.1rem; margin-bottom: 14px; }
+  .onboarding-form .step-progress { gap: 6px; margin-bottom: 18px; font-size: .92rem; }
+  .onboarding-form .field-grid { gap: 14px; }
+  .onboarding-form label { font-size: .95rem; }
+  .onboarding-form input:not([type=checkbox]), .onboarding-form select { min-height: 48px; }
   .wizard-actions .btn.primary { min-width: 0; flex: 1; }
   dialog { padding: 20px 16px; }
   #device-import-dialog .sticky-actions { bottom: -20px; margin-bottom: -20px; padding-bottom: 20px; }
