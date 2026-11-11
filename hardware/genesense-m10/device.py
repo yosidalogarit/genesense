@@ -14,10 +14,14 @@ OXI_ADDR = 0x57                              # SEN0518, switch on the sensor set
 
 
 class Board:
+    """All talk with the co-processor goes through `io`, one thing at a time: pinpong is not safe to use from two
+    threads at once (screen loop, voice thread), and the system's `brightness` command may use the same link.
+    Reads give up quickly when the link is busy instead of waiting, so the screen never hangs on them."""
+
     def __init__(self):
         self.ok = False
         self.i2c = None
-        self._beep_lock = threading.Lock()
+        self.io = threading.RLock()
         if platform.machine() != "aarch64" or os.environ.get("GENESENSE_NO_BOARD"):
             print("Board: not a UNIHIKER, using mock values")   # pinpong would hunt for a board on a PC
             return
@@ -31,39 +35,55 @@ class Board:
         except Exception as e:               # not a UNIHIKER, or pinpong missing
             print("Board: running without the M10's hardware (%s)" % e)
 
+    def _take(self, wait=0.05):
+        return self.io.acquire(timeout=wait)
+
     def buttons(self):                       # (A pressed, B pressed)
-        if not self.ok:
+        if not self.ok or not self._take():
             return False, False
         try:
             return bool(self._a.is_pressed()), bool(self._b.is_pressed())
         except Exception:
             return False, False
+        finally:
+            self.io.release()
 
     def accel(self):                         # (x, y, z) in g, or None
-        if not self.ok:
+        if not self.ok or not self._take():
             return None
         try:
             self._acc.get_alldata()
             return self._acc._ax, self._acc._ay, self._acc._az
         except Exception:
             return None
+        finally:
+            self.io.release()
 
     def light(self):                         # 0 (dark) .. 4095 (bright), -1 = unknown
-        if not self.ok:
+        if not self.ok or not self._take():
             return -1
         try:
             return int(self._light.read())
         except Exception:
             return -1
+        finally:
+            self.io.release()
 
     def tone(self, freq, ms):                # one note on the buzzer, waits until it ends
         if not self.ok:
             time.sleep(ms / 1000.0)
             return
-        with self._beep_lock:
+        if not self._take(1.0):              # busy for long: skip the note rather than pile up
+            return
+        try:
+            self._buzzer.pitch(int(freq))
+        except Exception:
+            pass
+        finally:
+            self.io.release()
+        time.sleep(ms / 1000.0)              # the link is free while the note sounds
+        with self.io:
             try:
-                self._buzzer.pitch(int(freq))
-                time.sleep(ms / 1000.0)
                 self._buzzer.stop()
             except Exception:
                 pass
@@ -82,9 +102,10 @@ class Oximeter:
         if not self.board.ok:
             return False
         try:
-            if OXI_ADDR not in self.board.i2c.scan():
-                return False
-            self.board.i2c.writeto_mem(OXI_ADDR, 0x20, [0x00, 0x01])   # "start measuring"
+            with self.board.io:
+                if OXI_ADDR not in self.board.i2c.scan():
+                    return False
+                self.board.i2c.writeto_mem(OXI_ADDR, 0x20, [0x00, 0x01])   # "start measuring"
             self.found = True
             self.errors = 0
         except Exception as e:
@@ -93,7 +114,12 @@ class Oximeter:
 
     def read(self):                          # (spo2, heart rate); spo2 0 = no finger yet; None = no answer
         try:
-            d = self.board.i2c.readfrom_mem(OXI_ADDR, 0x0C, 8)
+            if not self.board._take(0.3):
+                return None
+            try:
+                d = self.board.i2c.readfrom_mem(OXI_ADDR, 0x0C, 8)
+            finally:
+                self.board.io.release()
             self.errors = 0
             return int(d[0]), (d[2] << 24) | (d[3] << 16) | (d[4] << 8) | d[5]
         except Exception:
@@ -107,8 +133,14 @@ class Backlight:
     /sys/class/backlight is still tried for other boards."""
     ROOT = "/sys/class/backlight"
 
-    def __init__(self):
+    SETTLE = 0.7                             # wait until taps stop for this long before changing it
+    SPACING = 1.5                            # and never run the command more often than this
+
+    def __init__(self, link=None):
         import shutil
+        self.link = link                     # Board.io: nothing else talks to the co-processor while it runs
+        self._last_run = 0.0
+        self._asked = 0.0
         self.command = shutil.which("brightness") or next(
             (p for p in ("/usr/bin/brightness", "/usr/local/bin/brightness", "/opt/unihiker/bin/brightness") if os.path.exists(p)), None)
         self.path, self.max = None, 0
@@ -153,8 +185,9 @@ class Backlight:
             except (OSError, ValueError) as e:
                 print("Backlight: %s" % e)
                 return False
-        with self._lock:                     # quick taps: only the last level is sent
+        with self._lock:                     # quick taps: only the last level is sent, once they stop
             self._want = percent
+            self._asked = time.time()
             if self._busy:
                 return True
             self._busy = True
@@ -164,15 +197,27 @@ class Backlight:
     def _run(self):
         import subprocess
         while True:
+            while True:                      # let the taps settle, and keep runs apart
+                now = time.time()
+                wait = max(self._asked + self.SETTLE - now, self._last_run + self.SPACING - now)
+                if wait <= 0:
+                    break
+                time.sleep(min(wait, 0.2))
             with self._lock:
                 level, self._want = self._want, None
                 if level is None:
                     self._busy = False
                     return
+            if self.link is not None:
+                self.link.acquire()
             try:
                 subprocess.run([self.command, str(level)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
             except (OSError, subprocess.SubprocessError) as e:
                 print("Backlight: %s" % e)
+            finally:
+                if self.link is not None:
+                    self.link.release()
+                self._last_run = time.time()
 
 
 class MockOximeter:

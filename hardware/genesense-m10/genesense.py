@@ -157,7 +157,7 @@ class App:
         self.edit_slot = 0
         self.edit_minutes = 7 * 60
         # screen brightness (the menu's "Độ sáng"), kept between runs
-        self.backlight = Backlight()
+        self.backlight = Backlight(board.io if board.ok else None)
         self.brightness = int(self.config.get("brightness", 0) or (self.backlight.get() or 100))
         if self.config.get("brightness"):
             self.backlight.set(self.brightness)
