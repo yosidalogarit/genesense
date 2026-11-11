@@ -35,12 +35,12 @@ import threading  # noqa: E402
 import ui  # noqa: E402
 from ui import W, H, SAFE, ATTN, ALERT  # noqa: E402
 from cloud import Cloud  # noqa: E402
-from device import Board, MockOximeter, Oximeter  # noqa: E402
+from device import Backlight, Board, MockOximeter, Oximeter  # noqa: E402
 from store import Config, History, log_csv, sd_folder  # noqa: E402
 from voice import CLIPS, Voice, usb_card  # noqa: E402
 
 REMIND_NAMES = ["Buổi sáng", "Buổi trưa", "Buổi tối"]
-MENU = [("history", "Lịch sử đo"), ("reminders", "Nhắc đo"), ("speaker", "Thử loa"), ("info", "Thông tin máy"),
+MENU = [("history", "Lịch sử đo"), ("reminders", "Nhắc đo"), ("brightness", "Độ sáng"), ("info", "Thông tin máy"),
         ("logout", "Đăng xuất"), ("clear", "Xóa lịch sử"), ("idle", "Quay lại")]
 
 
@@ -156,6 +156,11 @@ class App:
         self.snooze_until = 0.0
         self.edit_slot = 0
         self.edit_minutes = 7 * 60
+        # screen brightness (the menu's "Độ sáng"), kept between runs
+        self.backlight = Backlight()
+        self.brightness = int(self.config.get("brightness", 0) or (self.backlight.get() or 80))
+        if self.config.get("brightness"):
+            self.backlight.set(self.brightness)
         self.go("idle" if cloud.signed_in else "pair")
         if cloud.signed_in:
             voice.say("welcome")
@@ -244,6 +249,8 @@ class App:
             m = self.reminders[self.edit_slot]
             self.edit_minutes = m if m >= 0 else [7 * 60, 11 * 60 + 30, 19 * 60][self.edit_slot]
             self.go("edit")
+        elif name.startswith("light:"):
+            self.set_brightness(int(name[6:]) if name[6] not in "+-" else self.brightness + int(name[6:]))
         elif name.startswith("adj:"):
             self.edit_minutes = (self.edit_minutes + int(name[4:])) % (24 * 60)
             self.dirty = True
@@ -272,19 +279,14 @@ class App:
                 return
             self.cloud.logout()
             self.go("pair")
-        elif item == "speaker":
-            card = usb_card()
-            if card is None:
-                self.toast("Chưa thấy loa USB, dùng còi", ATTN)
-                self.voice.say("ok")
-            elif self.voice.ready_count() == 0:
-                self.toast("Loa: " + card[1] + ". Chưa có giọng", ATTN)
-                self.voice.say("ok")
-            else:
-                self.toast("Loa: " + card[1], SAFE)
-                self.voice.say("welcome", cut=True)
         else:
             self.go(item)
+
+    def set_brightness(self, percent):
+        self.brightness = min(100, max(10, int(round(percent / 10.0)) * 10))
+        if self.backlight.set(self.brightness):
+            self.config.set(brightness=self.brightness)
+        self.dirty = True
 
     # ---------- measuring ----------
     def start_measuring(self):
@@ -853,6 +855,30 @@ class App:
         c.button("L", "Đo ngay", "start", "main")
         c.button("R", "Để sau", "later")
 
+    def draw_brightness(self, c):
+        c.card(10, 50, W - 20, 184, 16)
+        c.box(W / 2 - 28, 62, 56, 56, 28, ui.BLUE_TOP, ui.BLUE, None, 0, ui.SHADOW_BLUE)
+        c.icon("sun", W / 2, 90, ui.SURF, 1.3)
+        if not self.backlight.ok:
+            c.text_c(W / 2, 150, "Không chỉnh được", ui.INK, ui.BOLD)
+            c.wrap_c(176, "Máy này không cho phần mềm chỉnh độ sáng màn hình.", ui.INK2, ui.SMALL, W - 48)
+            c.button("C", "Về", "menu", key="B")
+            return
+        c.text_c(W / 2, 156, "%d%%" % self.brightness, ui.INK, ui.BIG)
+        c.stepper(20, 168, 44, 40, "-", "light:-10")
+        c.stepper(W - 64, 168, 44, 40, "+", "light:+10")
+        x0, x1, y = 76, W - 76, 188
+        c.rr(x0, y - 4, x1 - x0, 8, 4, ui.BLUE_SOFT)
+        k = x0 + (x1 - x0) * (self.brightness - 10) / 90.0
+        c.rr(x0, y - 4, max(8, k - x0), 8, 4, ui.BLUE)
+        c.disc(k, y, 9, ui.SURF)
+        c.disc(k, y, 6, ui.BLUE)
+        for i in range(10):                  # touch anywhere on the bar: 10 % .. 100 %
+            seg = (x1 - x0 + 16) / 10.0
+            c.tap(x0 - 8 + i * seg, y - 18, seg, 36, "light:%d" % ((i + 1) * 10))
+        c.text_c(W / 2, 226, "Chạm thanh để chọn nhanh", ui.INK2, ui.SMALL)
+        c.button("C", "Về", "menu", key="B")
+
     def draw_info(self, c):
         rows = []
         sd = sd_folder()
@@ -930,13 +956,13 @@ class App:
         c.button("C", "Mã mới", "newcode")
 
 
-TITLES = {"menu": "Menu", "history": "Lịch sử đo", "reminders": "Nhắc đo", "info": "Thông tin", "result": "Kết quả đo"}
-BACK = {"menu": "idle", "history": "menu", "reminders": "menu", "edit": "reminders", "info": "menu", "result": "idle"}
+TITLES = {"menu": "Menu", "brightness": "Độ sáng", "history": "Lịch sử đo", "reminders": "Nhắc đo", "info": "Thông tin", "result": "Kết quả đo"}
+BACK = {"menu": "idle", "brightness": "menu", "history": "menu", "reminders": "menu", "edit": "reminders", "info": "menu", "result": "idle"}
 DEPTH = {"pair": 0, "idle": 0, "remind": 1, "place": 1, "measure": 1, "menu": 1, "result": 2, "emergency": 2,
-         "history": 2, "reminders": 2, "info": 2, "edit": 3}
+         "history": 2, "reminders": 2, "info": 2, "brightness": 2, "edit": 3}
 FRAME_EVERY = {"measure": 0.1, "place": 0.1, "pair": 0.1, "idle": 0.12, "remind": 0.12, "emergency": 0.25}
-MENU_ICONS = ["chart", "clock", "speaker", "info", "logout", "trash"]
-MENU_SHORT = ["Lịch sử", "Nhắc đo", "Thử loa", "Thông tin", "Đăng xuất", "Xóa lịch sử"]
+MENU_ICONS = ["chart", "clock", "sun", "info", "logout", "trash"]
+MENU_SHORT = ["Lịch sử", "Nhắc đo", "Độ sáng", "Thông tin", "Đăng xuất", "Xóa lịch sử"]
 
 
 def run_tk(app):

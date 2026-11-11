@@ -342,6 +342,12 @@ class Canvas:
                        (cx - 5 * s, cy + 3 * s), (cx - 9 * s, cy + 3 * s)], color)
             self.arc(cx + 1 * s, cy, 5 * s, -50, 50, t, color)
             self.arc(cx + 1 * s, cy, 9.5 * s, -50, 50, t, color)
+        elif name == "sun":
+            self.disc(cx, cy, 4.5 * s, color)
+            for k in range(8):
+                a = k * math.pi / 4
+                ln(cx + math.cos(a) * 7.5 * s, cy + math.sin(a) * 7.5 * s, cx + math.cos(a) * 10 * s,
+                   cy + math.sin(a) * 10 * s, t, color)
         elif name == "info":
             self.arc(cx, cy, 9 * s, 0, 360, t, color)
             ln(cx, cy - 1 * s, cx, cy + 4.5 * s, t, color)

@@ -101,6 +101,49 @@ class Oximeter:
             return None
 
 
+class Backlight:
+    """The screen's backlight through Linux (/sys/class/backlight). The program runs as root, so it may write it."""
+    ROOT = "/sys/class/backlight"
+
+    def __init__(self):
+        self.path, self.max = None, 0
+        try:
+            for name in sorted(os.listdir(self.ROOT)):
+                path = os.path.join(self.ROOT, name)
+                with open(os.path.join(path, "max_brightness")) as f:
+                    top = int(f.read().strip())
+                if top > 0:
+                    self.path, self.max = path, top
+                    break
+        except (OSError, ValueError):
+            pass
+        print("Backlight: %s" % (self.path or "none found"))
+
+    @property
+    def ok(self):
+        return self.path is not None
+
+    def get(self):                           # percent, or None
+        if not self.ok:
+            return None
+        try:
+            with open(os.path.join(self.path, "brightness")) as f:
+                return int(round(int(f.read().strip()) * 100.0 / self.max))
+        except (OSError, ValueError):
+            return None
+
+    def set(self, percent):                  # True = written
+        if not self.ok:
+            return False
+        try:
+            with open(os.path.join(self.path, "brightness"), "w") as f:
+                f.write(str(max(1, int(round(self.max * percent / 100.0)))))
+            return True
+        except (OSError, ValueError) as e:
+            print("Backlight: %s" % e)
+            return False
+
+
 class MockOximeter:
     """Believable numbers when no sensor is plugged in. The screen says they are mock values."""
 
