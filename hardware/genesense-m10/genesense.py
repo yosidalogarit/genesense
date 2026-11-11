@@ -42,7 +42,6 @@ from voice import CLIPS, Voice, usb_card  # noqa: E402
 REMIND_NAMES = ["Buổi sáng", "Buổi trưa", "Buổi tối"]
 MENU = [("history", "Lịch sử đo"), ("reminders", "Nhắc đo"), ("speaker", "Thử loa"), ("info", "Thông tin máy"),
         ("logout", "Đăng xuất"), ("clear", "Xóa lịch sử"), ("idle", "Quay lại")]
-ANIMATED = ("place", "measure", "emergency", "pair", "idle", "remind")
 
 
 def level_hr(n):
@@ -129,6 +128,8 @@ class App:
         self.screen = "idle"
         self.since = time.monotonic()
         self.toast_text, self.toast_level, self.toast_until = "", SAFE, 0.0
+        self.toast_at = 0.0
+        self.flash = None                    # (rect, time) of the last pressed button, for the touch feedback
         self.hits = []
         self.hits_screen = ""
         self.dirty = True
@@ -176,6 +177,8 @@ class App:
         self.dirty = True
 
     def toast(self, text, level=SAFE, seconds=3.5):
+        if text != self.toast_text or time.monotonic() > self.toast_until:
+            self.toast_at = time.monotonic()
         self.toast_text, self.toast_level, self.toast_until = text, level, time.monotonic() + seconds
         self.dirty = True
 
@@ -188,6 +191,7 @@ class App:
             return
         for x0, y0, x1, y1, action in reversed(self.hits):
             if x0 <= x < x1 and y0 <= y < y1:
+                self.flash = ((x0, y0, x1, y1), time.monotonic())
                 self.voice.say("tick")
                 self.action(action)
                 return
@@ -195,16 +199,15 @@ class App:
     def button(self, which):                 # "A" or "B" on the M10's side
         if self.hits_screen != self.screen:
             return
-        if self.screen == "menu":
+        if self.screen == "menu":            # B moves through the tiles (and "Về"), A opens
             if which == "B":
-                self.menu_sel = (self.menu_sel + 1) % len(MENU)
-                self.clear_confirm_until = 0
-                self.dirty = True
-                return
-            self.action("menu:" + MENU[self.menu_sel][0])
+                self.action("down")
+            else:
+                self.action("menu:" + MENU[self.menu_sel][0])
             return
         for x0, y0, x1, y1, action in self.hits:   # the bottom buttons say which board button does the same
             if isinstance(action, tuple) and action[0] == which:
+                self.flash = ((x0, y0, x1, y1), time.monotonic())
                 self.voice.say("tick")
                 self.action(action[1])
                 return
@@ -523,17 +526,24 @@ class App:
 
     # ---------- drawing ----------
     def draw(self):
-        c = ui.Canvas(ui.RED_SOLID if self.screen == "emergency" else ui.BG)
-        if self.screen != "emergency":
-            c.top_bar(time.strftime("%H:%M") if clock_ok() else "", bool(self.net.ssid), None)
+        now = time.monotonic()
+        red = self.screen == "emergency"
+        c = ui.Canvas(ui.RED_SOLID if red else None)
+        if not red:
+            title = REMIND_NAMES[self.edit_slot] if self.screen == "edit" else TITLES.get(self.screen)
+            c.top_bar(time.strftime("%H:%M") if clock_ok() else "", bool(self.net.ssid), title, BACK.get(self.screen))
         getattr(self, "draw_" + self.screen)(c)
         if self.toast_text:
-            c.toast(self.toast_text, self.toast_level, top=self.screen in ("emergency", "edit", "menu"))
+            c.toast(self.toast_text, self.toast_level, top=self.screen in ("emergency", "edit", "menu", "pair"),
+                    appear=(now - self.toast_at) / 0.28)
         c.strip(self.mock)
         self.hits = c.hits
         self.hits_screen = self.screen
         self.dirty = False
         return c
+
+    def animating(self, now):                # something on screen moves without new data
+        return (self.toast_text and now - self.toast_at < 0.32) or (self.flash and now - self.flash[1] < 0.2)
 
     def account_text(self):
         return self.cloud.account_name or ("Đã đăng nhập" if self.cloud.signed_in else "Chưa đăng nhập")
@@ -552,17 +562,7 @@ class App:
             return "Chờ Wi-Fi", False
         return "Đang tạo %d/%d" % (have, need), False
 
-    def draw_idle(self, c):
-        c.card(8, 48, W - 16, 86, 16)
-        c.text_c(W / 2, 79, "Chạm để đo", ui.INK, ui.BIG)
-        c.text_c(W / 2, 102, "nhịp tim và oxy máu", ui.INK2, ui.BODY)
-        last = self.history.recent(1)
-        if last:
-            c.text_c(W / 2, 124, "Lần trước: %d lần/phút · %d%%" % (last[0]["hr"], last[0]["spo2"]), ui.INK2, ui.SMALL)
-        else:
-            import math
-            c.heart(W / 2, 117, 6 + 0.6 * math.sin(time.monotonic() * 3), ui.BLUE)
-        c.tap(8, 48, W - 16, 86, "start")
+    def status_rows(self):
         rows = []
         if not self.sensor_ok:
             rows.append(("Cảm biến", "Không thấy", True))
@@ -573,25 +573,41 @@ class App:
         rows.append(("Wi-Fi", self.net.ssid or "Chưa kết nối", False))
         rows.append(("Tài khoản", self.account_text(), False))
         unsent = self.history.unsent_count()
+        voice, warn = self.voice_text()
         if self.cloud.sync_problem == 409:
             rows.append(("Hồ sơ", "Cần hoàn thành", True))
         elif unsent:
             rows.append(("Chờ gửi", "%d lần đo" % unsent, False))
-        nxt = self.next_reminder()
-        if nxt and len(rows) < 5:
-            rows.append(("Nhắc đo", nxt, False))
-        voice, warn = self.voice_text()
-        if self.voice.ready_count() < len(CLIPS) and len(rows) < 5:
-            rows.append(("Giọng nói", voice, warn))
-        h = 24 if len(rows) <= 4 else 21
-        y = 140
-        c.card(8, y, W - 16, len(rows) * h + 8, 16)
-        y += 4
+        elif self.voice.ready_count() < len(CLIPS) and warn:
+            rows.append(("Giọng nói", voice, True))
+        elif self.next_reminder():
+            rows.append(("Nhắc đo", self.next_reminder(), False))
+        return rows
+
+    def draw_idle(self, c):
+        import math
+        now = time.monotonic()
+        # the big card: like the app's status panel (white to pale blue, blue edge and glow)
+        c.box(10, 48, W - 20, 88, 18, ui.SURF, ui.hexc("#eef7ff"), ui.hexc("#c9e1ff"), 1, ui.SHADOW_BLUE[:1] + (0.12, 6, 3))
+        beat = 0.5 + 0.5 * math.sin(now * 2 * math.pi * 1.1)
+        c.box(22, 66, 52, 52, 26, ui.BLUE_TOP, ui.BLUE, None, 0, ui.SHADOW_BLUE)
+        c.heart(48, 90, 8.5 + 1.2 * beat, ui.SURF)
+        c.text(86, 84, "Chạm để đo", ui.INK, ("bold", 22))
+        last = self.history.recent(1)
+        c.text(86, 106, "nhịp tim, oxy máu", ui.INK2, ui.SMALL)
+        if last:
+            f = ("medium", 14)
+            c.text(86, 125, c.fit("Lần trước %d · %d%%" % (last[0]["hr"], last[0]["spo2"]), f, W - 98), ui.BLUE, f)
+        c.tap(10, 48, W - 20, 88, "start")
+        rows = self.status_rows()[:4]
+        h = 21
+        c.card(10, 146, W - 20, len(rows) * h + 6, 16)
+        y = 149
         for i, (label, value, warn) in enumerate(rows):
             c.row(y, h, label, value, i == len(rows) - 1, warn)
             y += h
-        c.button(True, "Bắt đầu", ("A", "start"), "main")
-        c.button(False, "Menu", ("B", "menu"))
+        c.button("L", "Bắt đầu", "start", "main")
+        c.button("R", "Menu", "menu")
 
     def next_reminder(self):
         on = sorted(m for m in self.reminders if m >= 0)
@@ -604,80 +620,80 @@ class App:
 
     def draw_place(self, c):
         import math
-        c.wrap_c(72, "Đeo cảm biến vào ngón tay" if self.sensor_ok else "Đặt ngón tay lên cảm biến", ui.INK, ui.TITLE, W - 40)
-        t = (time.monotonic() % 2.0) / 2.0
-        fy = 104 + int(22 * (t / 0.6 if t < 0.6 else 1.0))
-        c.rr(64, 188, 112, 30, 10, ui.LOGO)
-        c.rr(102, 194, 36, 18, 6, (40, 56, 90))
-        c.disc(W / 2, 203, 9 + 3 * math.sin(time.monotonic() * 6.6), (255, 120, 110))
-        c.disc(W / 2, 203, 5, (255, 60, 50))
-        c.rr(98, fy, 44, 84, 22, ui.SKIN)
-        c.rr(106, fy + 52, 28, 24, 11, ui.NAIL)
+        now = time.monotonic()
+        c.wrap_c(70, "Đeo cảm biến vào ngón tay" if self.sensor_ok else "Đặt ngón tay lên cảm biến", ui.INK, ui.TITLE, W - 40)
+        t = (now % 2.0) / 2.0
+        fy = 100 + 16 * ui.ease(t / 0.6 if t < 0.6 else 1.0)
+        c.box(64, 174, 112, 28, 10, ui.hexc("#1a3a6b"), ui.LOGO, None, 0, ui.SHADOW_SOFT)
+        c.rr(102, 179, 36, 18, 6, (40, 56, 90))
+        c.disc(W / 2, 188, 9 + 3 * math.sin(now * 6.6), (255, 120, 110))
+        c.disc(W / 2, 188, 5, (255, 60, 50))
+        c.rr(98, fy, 44, 72, 22, ui.SKIN)
+        c.rr(106, fy + 44, 28, 21, 10, ui.NAIL)
         if self.sensor_ok and self.good_streak == 0:
-            s = "Đang chờ cảm biến... %ds" % int(time.monotonic() - self.since)
+            s = "Đang chờ cảm biến... %ds" % int(now - self.since)
         elif self.sensor_ok:
             s = "Đã thấy ngón tay, giữ yên"
         else:
             s = "Giữ yên tay, thở đều"
-        w = c.text_w(s, ui.BOLD) + 24
-        c.rr((W - w) / 2, 226, w, 26, 8, ui.BLUE_SOFT)
-        c.text_c(W / 2, 245, s, ui.BLUE, ui.BOLD)
-        c.button(False, "Hủy", ("B", "cancel"))
+        w = c.text_w(s, ui.BOLD) + 28
+        c.box((W - w) / 2, 210, w, 26, 13, ui.BLUE_SOFT, ui.hexc("#e0edff"), ui.BLUE_LINE, 1, None)
+        c.text_c(W / 2, 228, s, ui.BLUE, ui.BOLD)
+        c.button("C", "Hủy", "cancel", key="B")
 
     def draw_measure(self, c):
         now = time.monotonic()
         elapsed = now - self.measure_start
         holding = now < self.hold_until
         if holding:
-            c.card(8, 48, W - 16, 40, 12, ui.AMBER_BG, ui.AMBER_LINE)
+            c.box(10, 50, W - 20, 38, 14, ui.AMBER_BG, ui.AMBER_BG, ui.AMBER_LINE, 1, None)
             w = c.text_w("Giữ yên tay!", ui.TITLE) + 22
-            c.mark((W - w) / 2, 61, ATTN)
+            c.mark((W - w) / 2, 62, ATTN)
             c.text((W - w) / 2 + 22, 76, "Giữ yên tay!", ui.AMBER, ui.TITLE)
         else:
-            c.text_c(W / 2, 70, "Đang đo...", ui.INK, ui.TITLE)
+            c.text_c(W / 2, 68, "Đang đo...", ui.INK, ui.TITLE)
             if self.sensor_ok:
-                c.text_c(W / 2, 89, "Đã đọc %d lần · số mới mỗi 4 s" % len(self.hr_samples), ui.INK2, ui.SMALL)
+                c.text_c(W / 2, 87, "Đã đọc %d lần · số mới mỗi 4 s" % len(self.hr_samples), ui.INK2, ui.SMALL)
         frac = min(1.0, max(0.0, elapsed / float(self.measure_seconds())))
-        cy = 152
-        c.ring(W / 2, cy, 46, 56, 1, ui.LINE)
-        c.ring(W / 2, cy, 46, 56, frac, ui.AMBER if holding else ui.BLUE)
+        cy = 150
+        c.disc(W / 2, cy, 60, ui.SURF)
+        c.ring(W / 2, cy, 47, 57, 1, ui.BLUE_SOFT)
+        c.ring(W / 2, cy, 47, 57, frac, ui.AMBER if holding else ui.BLUE)
         left = self.measure_seconds() if elapsed < 0 else max(0, self.measure_seconds() - int(elapsed))
         c.text_c(W / 2, cy + 16, str(left), ui.INK, ui.HUGE)
         c.text_c(W / 2, cy + 34, "giây", ui.INK2, ui.SMALL)
-        c.card(8, 216, W - 16, 32, 12)
         live = ""
         if self.live_hr and not holding:
             live = "Nhịp %d" % self.live_hr
             if self.sensor_ok and self.live_spo2:
                 live += " · %d%%" % self.live_spo2
+        c.card(10, 214, W - 20, 24, 12, shadow=False)
         if holding:
-            c.text_c(W / 2, 238, "Đo lại từ đầu", ui.AMBER, ui.BOLD)
+            c.text_c(W / 2, 231, "Đo lại từ đầu", ui.AMBER, ui.BOLD)
         elif self.sensor_ok:
-            c.text_c(W / 2, 238, live or "Chờ số đầu tiên...", ui.INK if live else ui.INK2, ui.BOLD)
+            c.text_c(W / 2, 231, live or "Chờ số đầu tiên...", ui.INK if live else ui.INK2, ui.BOLD)
         else:
-            self.draw_wave(c, 18, 220, 130 if live else W - 36, 24)
+            self.draw_wave(c, 20, 216, 120 if live else W - 40, 20)
             if live:
-                c.text_r(W - 20, 238, live, ui.INK, ui.BOLD)
-        c.button(False, "Hủy", ("B", "cancel"))
+                c.text_r(W - 22, 231, live, ui.INK, ui.BOLD)
+        c.button("C", "Hủy", "cancel", key="B")
 
     def draw_wave(self, c, x, y, w, h):
-        v = self.wave
+        v = self.wave[-120:]
         if len(v) < 2:
             return
         lo, hi = min(v), max(v)
         hi = hi if hi - lo > 1e-6 else lo + 1
-        n = len(v)
-        pts = [(x + i * (w - 1) / 119.0, y + h - 3 - (val - lo) / (hi - lo) * (h - 6)) for i, val in enumerate(v[-120:])]
+        pts = [(x + i * (w - 1) / 119.0, y + h - 3 - (val - lo) / (hi - lo) * (h - 6)) for i, val in enumerate(v)]
         for (ax, ay), (bx, by) in zip(pts, pts[1:]):
             c.line(ax, ay, bx, by, 2, ui.CHART)
-        del n
 
     def tile(self, c, x, y, w, h, label, unit, value, level, word, lo, hi, edges, zones):
         c.card(x, y, w, h, 16)
         c.text(x + 12, y + 22, label, ui.INK, ui.BOLD)
         c.text(x + 12, y + 40, unit, ui.INK2, ui.SMALL)
-        c.text_c(x + w / 2.0, y + 88, str(value), ui.INK, ui.NUM)
-        bx, bw, by = x + 12, w - 24, y + 100
+        c.text_c(x + w / 2.0, y + 90, str(value), ui.INK, ui.NUM)
+        bx, bw, by = x + 12, w - 24, y + 104
 
         def pos(v):
             return bx + (min(hi, max(lo, v)) - lo) * bw / float(hi - lo)
@@ -689,29 +705,27 @@ class App:
         c.rr(m - 2, by - 5, 4, 16, 2, ui.INK)
         f = ("medium", 14)
         lines = c.split(word, f, w - 34, 2)
-        ty, th = y + 118, h - 126
-        c.rr(x + 6, ty, w - 12, th, 8, ui.LEVEL_BG[level])
+        ty, th = y + 124, h - 132
+        c.rr(x + 6, ty, w - 12, th, 10, ui.LEVEL_BG[level])
         c.mark(x + 11, ty + th / 2.0 - 6, level, 12)
         for i, ln in enumerate(lines):
             c.text(x + 28, ty + th / 2.0 + 5 + (i * 2 - (len(lines) - 1)) * 8, ln, ui.LEVEL_COLOR[level], f)
 
     def draw_result(self, c):
         r = self.result
-        c.text(12, 66, "Kết quả đo", ui.INK, ui.TITLE)
-        if r["t"]:
-            c.text_r(W - 12, 66, time.strftime("%H:%M", time.localtime(r["t"])), ui.INK2, ui.SMALL)
         lh, ls = level_hr(r["hr"]), level_spo2(r["spo2"])
-        w = (W - 22) // 2
-        self.tile(c, 8, 74, w, 160, "Nhịp tim", "lần/phút", r["hr"], lh, word_hr(lh), 30, 170,
+        w = (W - 30) // 2
+        self.tile(c, 10, 50, w, 166, "Nhịp tim", "lần/phút", r["hr"], lh, word_hr(lh), 30, 170,
                   [30, 40, 50, 110, 150, 170], [ALERT, ATTN, SAFE, ATTN, ALERT])
-        self.tile(c, W - 8 - w, 74, w, 160, "Oxy máu", "SpO₂, %", r["spo2"], ls, word_spo2(ls), 85, 100,
+        self.tile(c, W - 10 - w, 50, w, 166, "Oxy máu", "SpO₂, %", r["spo2"], ls, word_spo2(ls), 85, 100,
                   [85, 90, 95, 100], [ALERT, ATTN, SAFE])
         state = self.result_state()
         if not self.toast_text:
             ok = state.startswith("Đã lưu")
-            c.text_c(W / 2, ui.Canvas.BTN_Y - 4, state, ui.GREEN if ok else ui.INK2, ui.SMALL)
-        c.button(True, "Đo lại", ("A", "start"))
-        c.button(False, "Xong", ("B", "idle"), "main")
+            text = c.fit(state, ui.SMALL, W - 24)
+            c.text_c(W / 2, 234, text, ui.GREEN if ok else ui.INK2, ui.SMALL)
+        c.button("L", "Đo lại", "start")
+        c.button("R", "Xong", "idle", "main")
 
     def draw_emergency(self, c):
         r = self.result
@@ -725,7 +739,7 @@ class App:
         c.line(W / 2, 23, W / 2, 37, 4.5, ui.RED_SOLID)
         c.disc(W / 2, 45, 2.6, ui.RED_SOLID)
         c.text_c(W / 2, 86, "NGUY HIỂM", ui.SURF, ui.BIG)
-        c.rr(14, 96, W - 28, 96, 16, ui.SURF)
+        c.box(16, 96, W - 32, 96, 18, ui.SURF, ui.hexc("#fff4f3"), None, 0, ((60, 0, 0), 0.25, 5, 3))
         c.text_c(W / 2, 125, "Gọi cấp cứu", ui.RED_SOLID, ui.TITLE)
         c.text_c(W / 2, 182, "115", ui.RED_SOLID, ui.HUGE)
         y = 214
@@ -737,42 +751,37 @@ class App:
             y += 20
         if y < 236:
             c.text_c(W / 2, y, "Đo lại ngay. Khó thở: gọi 115", ui.SURF, ui.SMALL)
-        c.button(True, "Đo lại", ("A", "start"), "onred")
-        c.button(False, "Đã hiểu", ("B", "idle"), "onred")
+        c.button("L", "Đo lại", "start", "onred")
+        c.button("R", "Đã hiểu", "idle", "onred")
 
     def draw_menu(self, c):
-        rh = 26
-        c.card(8, 48, W - 16, len(MENU) * rh + 8, 16)
-        for i, (key, label) in enumerate(MENU):
-            y = 52 + i * rh
-            if i == self.menu_sel:
-                c.rr(12, y, W - 24, rh, 9, ui.BLUE_SOFT)
-            color = ui.RED if key in ("clear", "logout") else ui.INK
-            if key == "clear" and time.monotonic() < self.clear_confirm_until and i == self.menu_sel:
-                label = "Chạm lần nữa để xóa"
-            if key == "logout" and time.monotonic() < self.clear_confirm_until and i == self.menu_sel:
-                label = "Chạm lần nữa"
-            c.text(24, y + rh / 2.0 + 6, label, color, ui.BOLD)
-            c.text_r(W - 24, y + rh / 2.0 + 6, "›", ui.INK2, ui.BOLD)
-            c.tap(8, y, W - 16, rh, "menu:" + key)
-        c.button(True, "Chọn", ("A", "menu:" + MENU[self.menu_sel][0]), "main")
-        c.button(False, "Xuống", ("B", "down"))
+        confirm = time.monotonic() < self.clear_confirm_until
+        tw, th = (W - 30) // 2, 58
+        for i, ((key, _), icon, label) in enumerate(zip(MENU[:6], MENU_ICONS, MENU_SHORT)):
+            x, y = 10 + (i % 2) * (tw + 10), 50 + (i // 2) * (th + 6)
+            if confirm and i == self.menu_sel and key in ("clear", "logout"):
+                label = "Chạm lại"
+            color = ui.RED if key in ("clear", "logout") else ui.BLUE
+            c.tile(x, y, tw, th, icon, label, color, i == self.menu_sel, "menu:" + key)
+        back = self.menu_sel == len(MENU) - 1
+        c.button("L", "Về" if back else "Mở", "menu:" + MENU[self.menu_sel][0], "main")
+        c.button("R", "Tiếp", "down")
 
     def chart(self, c, y, h, label, items, is_hr):
-        c.card(8, y, W - 16, h, 16)
-        c.text(20, y + 22, label, ui.INK2, ui.SMALL)
+        c.card(10, y, W - 20, h, 16)
+        c.text(22, y + 22, label, ui.INK2, ui.SMALL)
         n = len(items)
         if not n:
             c.text_c(W / 2, y + h / 2 + 12, "Chưa có lần đo", ui.INK2, ui.BODY)
             return
         key = "hr" if is_hr else "spo2"
-        c.text_r(W - 20, y + 25, str(items[-1][key]) + ("" if is_hr else "%"), ui.INK, ui.TITLE)
+        c.text_r(W - 22, y + 25, str(items[-1][key]) + ("" if is_hr else "%"), ui.INK, ui.TITLE)
         lo, hi = (50.0, 110.0) if is_hr else (90.0, 100.0)
         for it in items:
             lo, hi = min(lo, it[key] - 3), max(hi, it[key] + 3)
         if not is_hr:
             hi = min(hi, 101.0)
-        x0, x1, y0, y1 = 26, W - 26, y + 34, y + h - 10
+        x0, x1, y0, y1 = 28, W - 28, y + 34, y + h - 10
 
         def py(v):
             return y1 - (v - lo) / (hi - lo) * (y1 - y0)
@@ -781,7 +790,7 @@ class App:
             return (x0 + x1) / 2.0 if n == 1 else x0 + k * (x1 - x0) / float(n - 1)
         band_lo, band_hi = (50, 110) if is_hr else (95, 100)
         b0, b1 = min(y1, max(y0, py(band_hi))), min(y1, max(y0, py(band_lo)))
-        c.rr(x0 - 6, b0, x1 - x0 + 12, b1 - b0, 4, ui.GREEN_BG)
+        c.rr(x0 - 6, b0, x1 - x0 + 12, b1 - b0, 5, ui.GREEN_BG)
         for k in range(1, n):
             c.line(px(k - 1), py(items[k - 1][key]), px(k), py(items[k][key]), 2, ui.CHART)
         for k, it in enumerate(items):
@@ -794,70 +803,57 @@ class App:
 
     def draw_history(self, c):
         items = self.history.recent(14)
-        total = len(self.history.recent(10 ** 6))
-        c.text(12, 70, "Lịch sử đo", ui.INK, ui.TITLE)
-        if total:
-            c.text_r(W - 12, 70, "%d lần" % total, ui.INK2, ui.SMALL)
-        self.chart(c, 78, 74, "Nhịp tim · lần/phút", items, True)
-        self.chart(c, 158, 74, "Oxy trong máu · %", items, False)
-        if items:
-            if any(it["mock"] for it in items):
-                c.text_c(W / 2, ui.Canvas.BTN_Y - 4, "Chấm rỗng = số giả lập", ui.INK2, ui.SMALL)
-            elif items[-1]["t"]:
-                c.text_c(W / 2, ui.Canvas.BTN_Y - 4, "Mới nhất " + time.strftime("%d/%m %H:%M", time.localtime(items[-1]["t"])),
-                         ui.INK2, ui.SMALL)
-        c.button(True, "Đo", ("A", "start"), "main")
-        c.button(False, "Về", ("B", "idle"))
+        self.chart(c, 50, 88, "Nhịp tim · lần/phút", items, True)
+        self.chart(c, 146, 88, "Oxy trong máu · %", items, False)
+        c.button("L", "Đo", "start", "main")
+        c.button("R", "Về", "menu")
 
     def draw_reminders(self, c):
-        c.text(12, 70, "Nhắc đo", ui.INK, ui.TITLE)
-        rh = 44
-        c.card(8, 80, W - 16, 3 * rh + 8, 16)
+        rh = 52
+        c.card(10, 50, W - 20, 3 * rh + 6, 16)
         for i in range(3):
-            y = 84 + i * rh
+            y = 53 + i * rh
             m = self.reminders[i]
-            c.text(22, y + 28, REMIND_NAMES[i], ui.INK2, ui.BODY)
-            c.text_r(W - 34, y + 30, hhmm(m) if m >= 0 else "Tắt", ui.INK if m >= 0 else ui.INK2, ui.TITLE if m >= 0 else ui.BOLD)
-            c.text_r(W - 20, y + 29, "›", ui.INK2, ui.BOLD)
+            c.text(24, y + 32, REMIND_NAMES[i], ui.INK2, ui.BODY)
+            if m >= 0:
+                c.text_r(W - 40, y + 34, hhmm(m), ui.INK, ui.TITLE)
+            else:
+                c.text_r(W - 40, y + 33, "Tắt", ui.INK2, ui.BOLD)
+            c.icon("next", W - 26, y + rh / 2.0, ui.INK2, 0.9)
             if i < 2:
-                c.rect(20, y + rh, W - 40, 1, ui.LINE)
-            c.tap(8, y, W - 16, rh, "slot:%d" % i)
+                c.rect(22, y + rh, W - 44, 1, ui.LINE)
+            c.tap(10, y, W - 20, rh, "slot:%d" % i)
         note = "Chạm một dòng để đổi giờ" if clock_ok() else "Cần Wi-Fi để máy biết giờ"
-        c.text_c(W / 2, 240, note, ui.INK2, ui.SMALL)
-        c.button(False, "Về", ("B", "menu"))
+        c.text_c(W / 2, 230, note, ui.INK2, ui.SMALL)
+        c.button("C", "Về", "menu", key="B")
 
     def draw_edit(self, c):
-        c.text(12, 70, REMIND_NAMES[self.edit_slot], ui.INK, ui.TITLE)
-        c.card(8, 80, W - 16, 116, 16)
+        c.card(10, 50, W - 20, 184, 16)
         h, m = self.edit_minutes // 60, self.edit_minutes % 60
         for col, (val, minus, plus) in enumerate((("%02d" % h, -60, 60), ("%02d" % m, -15, 15))):
-            cx = 74 if col == 0 else 166
+            cx = 70 if col == 0 else 170
+            c.stepper(cx - 34, 60, 68, 42, "+", "adj:%d" % plus)
             c.text_c(cx, 150, val, ui.INK, ui.NUM)
-            for dy, step, sign in ((-1, plus, "+"), (1, minus, "−")):
-                by = 88 if dy < 0 else 160
-                c.card(cx - 30, by, 60, 30, 10, ui.BLUE_SOFT, ui.BLUE_SOFT)
-                c.text_c(cx, by + 23, sign, ui.BLUE, ui.TITLE)
-                c.tap(cx - 34, by - 2, 68, 34, "adj:%d" % step)
-        c.text_c(W / 2, 148, ":", ui.INK2, ui.NUM)
-        c.text_c(W / 2, 222, "Giờ cách 1, phút cách 15", ui.INK2, ui.SMALL)
-        c.button(True, "Lưu", ("A", "save"), "main")
-        c.button(False, "Tắt nhắc", ("B", "off"))
+            c.stepper(cx - 34, 164, 68, 42, "-", "adj:%d" % minus)
+        c.text_c(W / 2, 147, ":", ui.INK2, ui.NUM)
+        c.text_c(W / 2, 226, "Giờ cách 1 · phút cách 15", ui.INK2, ui.SMALL)
+        c.button("L", "Lưu", "save", "main")
+        c.button("R", "Tắt nhắc", "off")
 
     def draw_remind(self, c):
-        c.card(8, 48, W - 16, 150, 16)
-        c.disc(W / 2, 98, 32, ui.BLUE_SOFT)
-        c.ring(W / 2, 98, 20, 24, 1, ui.BLUE)
-        c.line(W / 2, 98, W / 2, 86, 3.5, ui.BLUE)
-        c.line(W / 2, 98, W / 2 + 9, 103, 3.5, ui.BLUE)
-        c.text_c(W / 2, 162, "Đến giờ đo", ui.INK, ui.BIG)
-        c.text_c(W / 2, 186, "Nhắc lúc " + self.remind_label, ui.INK2, ui.BODY)
-        c.tap(8, 48, W - 16, 150, "start")
-        c.wrap_c(222, "Chạm để đo nhịp tim và oxy trong máu", ui.INK2, ui.SMALL)
-        c.button(True, "Đo ngay", ("A", "start"), "main")
-        c.button(False, "Để sau", ("B", "later"))
+        import math
+        c.box(10, 50, W - 20, 184, 18, ui.SURF, ui.hexc("#eef7ff"), ui.hexc("#c9e1ff"), 1, ui.SHADOW_CARD)
+        wob = math.sin(time.monotonic() * 9) * 4 if int(time.monotonic()) % 3 == 0 else 0
+        c.box(W / 2 - 34, 66, 68, 68, 34, ui.BLUE_TOP, ui.BLUE, None, 0, ui.SHADOW_BLUE)
+        c.icon("clock", W / 2 + wob * 0.3, 100, ui.SURF, 1.6)
+        c.text_c(W / 2, 168, "Đến giờ đo", ui.INK, ui.BIG)
+        c.text_c(W / 2, 192, "Nhắc lúc " + self.remind_label, ui.INK2, ui.BODY)
+        c.text_c(W / 2, 220, "Chạm để đo ngay", ui.BLUE, ui.BOLD)
+        c.tap(10, 50, W - 20, 184, "start")
+        c.button("L", "Đo ngay", "start", "main")
+        c.button("R", "Để sau", "later")
 
     def draw_info(self, c):
-        c.text(12, 68, "Thông tin máy", ui.INK, ui.TITLE)
         rows = []
         sd = sd_folder()
         if sd:
@@ -871,25 +867,22 @@ class App:
         rows.append(("Tài khoản", self.account_text(), False))
         unsent = self.history.unsent_count()
         if self.cloud.sync_problem == 409:
-            rows.append(("Gửi GeneSense", "Cần hoàn thành hồ sơ", True))
+            rows.append(("Đồng bộ", "Cần hoàn thành hồ sơ", True))
         else:
-            rows.append(("Gửi GeneSense", ("Chờ gửi %d" % unsent) if unsent else "Đã gửi hết", False))
+            rows.append(("Đồng bộ", ("Chờ gửi %d" % unsent) if unsent else "Đã gửi hết", False))
         card = usb_card()
         rows.append(("Loa", card[1] if card else "Dùng còi", card is None))
         voice, warn = self.voice_text()
         rows.append(("Giọng nói", voice, warn))
         rows.append(("Wi-Fi", self.net.ssid or "Chưa kết nối", False))
-        rows.append(("Địa chỉ", self.net.ip or "—", False))
-        rh = 22
-        y = 78
-        c.card(8, y, W - 16, len(rows) * rh + 8, 16)
-        y += 4
+        rows.append(("Địa chỉ", self.net.ip, False) if self.net.ssid else ("Cài Wi-Fi", "USB, mở 10.1.2.3", False))
+        rh = 25
+        c.card(10, 50, W - 20, len(rows) * rh + 6, 16)
+        y = 53
         for i, (label, value, warn) in enumerate(rows):
-            c.row(y, rh, label, value, i == len(rows) - 1, warn)
+            c.row(y, rh, label, value or "—", i == len(rows) - 1, warn)
             y += rh
-        if not self.net.ssid:
-            c.text_c(W / 2, ui.Canvas.BTN_Y - 4, "Cài Wi-Fi: cắm USB, mở 10.1.2.3", ui.INK2, ui.SMALL)
-        c.button(False, "Về", ("B", "menu"))
+        c.button("C", "Về", "menu", key="B")
 
     _qr_cache = (None, None)
 
@@ -906,33 +899,44 @@ class App:
         return self._qr_cache[1]
 
     def draw_pair(self, c):
-        import math
-        c.text_c(W / 2, 66, "Đăng nhập", ui.INK, ui.TITLE)
         code, url = self.cloud.pair_code, self.cloud.pair_url
         if not self.net.ssid:                # step 1: Wi-Fi
-            c.status_icon(W / 2, 118, ATTN)
-            c.text_c(W / 2, 170, "Bước 1: nối Wi-Fi", ui.INK, ui.BOLD)
-            c.wrap_c(194, "Cắm cáp USB vào máy tính, mở trang 10.1.2.3, vào Network Settings để chọn Wi-Fi.",
-                     ui.INK2, ui.SMALL, W - 32)
+            c.text_c(W / 2, 70, "Đăng nhập", ui.INK, ui.TITLE)
+            c.card(10, 84, W - 20, 150, 16)
+            c.status_icon(W / 2, 124, ATTN)
+            c.text_c(W / 2, 172, "Bước 1: nối Wi-Fi", ui.INK, ui.BOLD)
+            c.wrap_c(194, "Cắm cáp USB vào máy tính, mở trang 10.1.2.3, chọn Wi-Fi.", ui.INK2, ui.SMALL, W - 44)
             return
         if not code:
-            c.ring(W / 2, 126, 22, 28, 1, ui.LINE)
-            c.ring(W / 2, 126, 22, 28, 0.15 + 0.1 * math.sin(time.monotonic() * 3), ui.BLUE)
+            now = time.monotonic()
+            c.text_c(W / 2, 70, "Đăng nhập", ui.INK, ui.TITLE)
+            c.card(10, 84, W - 20, 150, 16)
+            c.ring(W / 2, 134, 22, 28, 1, ui.BLUE_SOFT)
+            c.arc(W / 2, 134, 25, (now * 300) % 360, (now * 300) % 360 + 90, 6, ui.BLUE)
             p = self.cloud.pair_problem
-            c.text_c(W / 2, 188, "Chưa lấy được mã" if p else "Đang lấy mã...", ui.INK, ui.BOLD)
+            c.text_c(W / 2, 192, "Chưa lấy được mã" if p else "Đang lấy mã...", ui.INK, ui.BOLD)
             if p:
                 why = ("Không vào được mạng, thử lại..." if p < 0 else
                        "Máy chủ chưa hỗ trợ máy đo (404)" if p == 404 else "Lỗi %d, thử lại..." % p)
-                c.wrap_c(210, why, ui.INK2, ui.SMALL, W - 32)
+                c.wrap_c(214, why, ui.INK2, ui.SMALL, W - 44)
             return
+        c.text_c(W / 2, 66, "Quét mã để đăng nhập", ui.INK, ui.BOLD)
         m = self.qr_matrix(url)
         if m:
-            c.qr(m, 78, 124)
+            c.qr(m, 78, 116)
         else:
             c.wrap_c(120, "Mở ứng dụng GeneSense, chọn Kết nối máy đo và nhập mã:", ui.INK2, ui.BODY, W - 32)
         c.text_c(W / 2, 228, code[:4] + " " + code[4:], ui.NAVY, ui.BIG)
-        c.text_c(W / 2, 248, "Quét mã bằng điện thoại", ui.INK2, ui.SMALL)
-        c.button(True, "Mã mới", ("A", "newcode"))
+        c.button("C", "Mã mới", "newcode")
+
+
+TITLES = {"menu": "Menu", "history": "Lịch sử đo", "reminders": "Nhắc đo", "info": "Thông tin", "result": "Kết quả đo"}
+BACK = {"menu": "idle", "history": "menu", "reminders": "menu", "edit": "reminders", "info": "menu", "result": "idle"}
+DEPTH = {"pair": 0, "idle": 0, "remind": 1, "place": 1, "measure": 1, "menu": 1, "result": 2, "emergency": 2,
+         "history": 2, "reminders": 2, "info": 2, "edit": 3}
+FRAME_EVERY = {"measure": 0.1, "place": 0.1, "pair": 0.1, "idle": 0.12, "remind": 0.12, "emergency": 0.25}
+MENU_ICONS = ["chart", "clock", "speaker", "info", "logout", "trash"]
+MENU_SHORT = ["Lịch sử", "Nhắc đo", "Thử loa", "Thông tin", "Đăng xuất", "Xóa lịch sử"]
 
 
 def run_tk(app):
@@ -948,37 +952,67 @@ def run_tk(app):
         root.config(cursor="none")
     label = tk.Label(root, bd=0, highlightthickness=0)
     label.pack()
-    state = {"photo": None, "last_draw": 0.0, "minute": -1, "a": False, "b": False}
+    st = {"photo": None, "last": 0.0, "minute": -1, "a": False, "b": False, "screen": None, "base": None, "trans": None,
+          "cost": 0.03}
 
-    def on_click(e):
-        app.tap(e.x, e.y)
-    label.bind("<Button-1>", on_click)
+    label.bind("<Button-1>", lambda e: app.tap(e.x, e.y))
     root.bind("<Escape>", lambda e: root.destroy())
     root.bind("a", lambda e: app.button("A"))
     root.bind("b", lambda e: app.button("B"))
 
+    def show(img):
+        st["photo"] = ImageTk.PhotoImage(img)
+        label.configure(image=st["photo"])
+
     def loop():
         try:
             a, b = app.board.buttons()
-            if a and not state["a"]:
+            if a and not st["a"]:
                 app.button("A")
-            if b and not state["b"]:
+            if b and not st["b"]:
                 app.button("B")
-            state["a"], state["b"] = a, b
+            st["a"], st["b"] = a, b
             app.tick()
             now = time.monotonic()
-            minute = time.localtime().tm_min
-            animate = app.screen in ANIMATED and now - state["last_draw"] > (0.25 if app.screen != "idle" else 1.0)
-            if app.dirty or animate or minute != state["minute"]:
-                state["minute"] = minute
-                state["last_draw"] = now
-                state["photo"] = ImageTk.PhotoImage(app.draw().frame())
-                label.configure(image=state["photo"])
+            img = None
+            if app.screen != st["screen"]:   # a new screen slides in over the old one
+                old = st["base"]
+                new = app.draw().frame()
+                if old is not None:
+                    if app.flash and now - app.flash[1] < 0.3:
+                        old = ui.flash(old, app.flash[0], 1.0)
+                    d = DEPTH.get(app.screen, 1) - DEPTH.get(st["screen"], 1)
+                    st["trans"] = (old, new, now, (d > 0) - (d < 0))
+                st["screen"], st["base"], st["last"] = app.screen, new, now
+                img = new if old is None else old
+            if st["trans"]:
+                old, new, t0, direction = st["trans"]
+                t = (now - t0) / 0.26
+                if t >= 1:
+                    st["trans"] = None
+                    img = st["base"]
+                else:
+                    img = ui.slide(old, new, t, direction)
+            if not st["trans"]:
+                minute = time.localtime().tm_min
+                every = FRAME_EVERY.get(app.screen)
+                if every:                    # a slow frame: draw less often, so touches stay quick
+                    every = max(every, st["cost"] * 3)
+                if (app.dirty or app.animating(now) or minute != st["minute"] or
+                        (every and now - st["last"] >= every)):
+                    st["minute"], st["last"] = minute, now
+                    st["base"] = app.draw().frame()
+                    st["cost"] = st["cost"] * 0.8 + (time.monotonic() - now) * 0.2
+                    img = st["base"]
+                if app.flash and now - app.flash[1] < 0.2:
+                    img = ui.flash(img or st["base"], app.flash[0], 1 - (now - app.flash[1]) / 0.2)
+            if img is not None:
+                show(img)
         except Exception as e:               # keep the device running whatever happens
             import traceback
             traceback.print_exc()
             print("Screen loop: %s" % e)
-        root.after(40, loop)
+        root.after(30, loop)
     loop()
     root.mainloop()
 
