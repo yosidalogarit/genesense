@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import current_user
-from .care import CODE_ALPHABET, FAILED_WINDOW_SECONDS, MAX_FAILED_CODES
+from .care import CODE_ALPHABET
 from .config import get_settings
 from .database import get_session
 from .models import CareCodeFailure, Device, DevicePairing, User
@@ -101,16 +101,9 @@ async def pairing_token(payload: PairToken, session: AsyncSession = Depends(get_
 
 
 async def _pairing_for(code: str, user: User, session: AsyncSession) -> DevicePairing:
-    """The live pairing for a code the owner typed or scanned. Wrong codes count against the same limit as sharing codes."""
-    since = _now() - timedelta(seconds=FAILED_WINDOW_SECONDS)
-    failures = await session.scalar(select(func.count()).select_from(CareCodeFailure).where(
-        CareCodeFailure.user_id == user.id, CareCodeFailure.created_at >= since))
-    if failures >= MAX_FAILED_CODES:
-        raise HTTPException(429, "Bạn đã nhập sai mã quá nhiều lần. Hãy thử lại sau 15 phút.")
+    """The live pairing for a code the owner typed or scanned."""
     pairing = await session.scalar(select(DevicePairing).where(DevicePairing.user_code_hash == _digest(_normalize(code))))
     if not pairing or _aware(pairing.expires_at) <= _now():
-        session.add(CareCodeFailure(user_id=user.id))
-        await session.commit()
         raise HTTPException(404, "Mã không đúng hoặc đã hết hạn. Hãy xem mã mới trên màn hình máy đo.")
     if pairing.user_id and pairing.user_id != user.id:
         raise HTTPException(409, "Máy đo này đang được kết nối với tài khoản khác.")
