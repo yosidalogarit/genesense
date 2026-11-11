@@ -158,7 +158,7 @@ class App:
         self.edit_minutes = 7 * 60
         # screen brightness (the menu's "Độ sáng"), kept between runs
         self.backlight = Backlight()
-        self.brightness = int(self.config.get("brightness", 0) or (self.backlight.get() or 80))
+        self.brightness = int(self.config.get("brightness", 0) or (self.backlight.get() or 100))
         if self.config.get("brightness"):
             self.backlight.set(self.brightness)
         self.go("idle" if cloud.signed_in else "pair")
@@ -861,7 +861,7 @@ class App:
         c.icon("sun", W / 2, 90, ui.SURF, 1.3)
         if not self.backlight.ok:
             c.text_c(W / 2, 150, "Không chỉnh được", ui.INK, ui.BOLD)
-            c.wrap_c(176, "Máy này không cho phần mềm chỉnh độ sáng màn hình.", ui.INK2, ui.SMALL, W - 48)
+            c.wrap_c(176, "Không thấy lệnh brightness. Hãy cập nhật hệ điều hành của M10.", ui.INK2, ui.SMALL, W - 48)
             c.button("C", "Về", "menu", key="B")
             return
         c.text_c(W / 2, 156, "%d%%" % self.brightness, ui.INK, ui.BIG)

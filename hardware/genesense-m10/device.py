@@ -102,29 +102,38 @@ class Oximeter:
 
 
 class Backlight:
-    """The screen's backlight through Linux (/sys/class/backlight). The program runs as root, so it may write it."""
+    """The screen's backlight. The M10 has no Linux backlight file: its system gives a `brightness 0-100` command
+    (unihiker.UNIConfig uses the same). The level resets when the M10 restarts, so the program sets it again at start.
+    /sys/class/backlight is still tried for other boards."""
     ROOT = "/sys/class/backlight"
 
     def __init__(self):
+        import shutil
+        self.command = shutil.which("brightness") or next(
+            (p for p in ("/usr/bin/brightness", "/usr/local/bin/brightness", "/opt/unihiker/bin/brightness") if os.path.exists(p)), None)
         self.path, self.max = None, 0
-        try:
-            for name in sorted(os.listdir(self.ROOT)):
-                path = os.path.join(self.ROOT, name)
-                with open(os.path.join(path, "max_brightness")) as f:
-                    top = int(f.read().strip())
-                if top > 0:
-                    self.path, self.max = path, top
-                    break
-        except (OSError, ValueError):
-            pass
-        print("Backlight: %s" % (self.path or "none found"))
+        if not self.command:
+            try:
+                for name in sorted(os.listdir(self.ROOT)):
+                    path = os.path.join(self.ROOT, name)
+                    with open(os.path.join(path, "max_brightness")) as f:
+                        top = int(f.read().strip())
+                    if top > 0:
+                        self.path, self.max = path, top
+                        break
+            except (OSError, ValueError):
+                pass
+        self._want = None
+        self._lock = threading.Lock()
+        self._busy = False
+        print("Backlight: %s" % (self.command or self.path or "no way to change it found"))
 
     @property
     def ok(self):
-        return self.path is not None
+        return bool(self.command or self.path)
 
-    def get(self):                           # percent, or None
-        if not self.ok:
+    def get(self):                           # percent, or None when it cannot be read (the command only sets)
+        if not self.path:
             return None
         try:
             with open(os.path.join(self.path, "brightness")) as f:
@@ -132,16 +141,38 @@ class Backlight:
         except (OSError, ValueError):
             return None
 
-    def set(self, percent):                  # True = written
+    def set(self, percent):                  # True = accepted; the command runs in the background
         if not self.ok:
             return False
-        try:
-            with open(os.path.join(self.path, "brightness"), "w") as f:
-                f.write(str(max(1, int(round(self.max * percent / 100.0)))))
-            return True
-        except (OSError, ValueError) as e:
-            print("Backlight: %s" % e)
-            return False
+        percent = max(5, min(100, int(percent)))
+        if self.path:
+            try:
+                with open(os.path.join(self.path, "brightness"), "w") as f:
+                    f.write(str(max(1, int(round(self.max * percent / 100.0)))))
+                return True
+            except (OSError, ValueError) as e:
+                print("Backlight: %s" % e)
+                return False
+        with self._lock:                     # quick taps: only the last level is sent
+            self._want = percent
+            if self._busy:
+                return True
+            self._busy = True
+        threading.Thread(target=self._run, daemon=True).start()
+        return True
+
+    def _run(self):
+        import subprocess
+        while True:
+            with self._lock:
+                level, self._want = self._want, None
+                if level is None:
+                    self._busy = False
+                    return
+            try:
+                subprocess.run([self.command, str(level)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            except (OSError, subprocess.SubprocessError) as e:
+                print("Backlight: %s" % e)
 
 
 class MockOximeter:
