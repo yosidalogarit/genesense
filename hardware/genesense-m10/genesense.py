@@ -969,13 +969,33 @@ def run_tk(app):
     import tkinter as tk
     from PIL import ImageTk
     os.environ.setdefault("DISPLAY", ":0")
-    root = tk.Tk()
+    root = None
+    for attempt in range(90):                # at power-on the screen may not be ready yet
+        try:
+            root = tk.Tk()
+            break
+        except tk.TclError as e:
+            if attempt % 10 == 0:
+                print("Waiting for the screen (%s)" % e)
+            time.sleep(1)
+    if root is None:
+        raise SystemExit("No screen to draw on")
     root.title("GeneSense")
     root.geometry("%dx%d+0+0" % (W, H))
     root.resizable(False, False)
     if app.board.ok:                         # on the M10: full screen, no mouse pointer
         root.overrideredirect(True)
         root.config(cursor="none")
+        root.attributes("-topmost", True)    # stay above the UNIHIKER menu, even if it starts after us
+
+        def keep_on_top():
+            try:
+                root.lift()
+                root.attributes("-topmost", True)
+            except tk.TclError:
+                pass
+            root.after(3000, keep_on_top)
+        root.after(1000, keep_on_top)
     label = tk.Label(root, bd=0, highlightthickness=0)
     label.pack()
     st = {"photo": None, "last": 0.0, "minute": -1, "a": False, "b": False, "screen": None, "base": None, "trans": None,
@@ -1056,6 +1076,54 @@ def make_app():
     return app
 
 
+class _Log:
+    """Everything printed also goes to data/genesense.log (kept under 512 KB), so a start at power-on,
+    with no terminal, still leaves a trace."""
+
+    def __init__(self, stream, path):
+        self.stream, self.path = stream, path
+
+    def write(self, text):
+        try:
+            self.stream.write(text)
+        except Exception:
+            pass
+        try:
+            if os.path.exists(self.path) and os.path.getsize(self.path) > 512 * 1024:
+                os.replace(self.path, self.path + ".1")
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(text)
+        except OSError:
+            pass
+
+    def flush(self):
+        try:
+            self.stream.flush()
+        except Exception:
+            pass
+
+
+def single_instance():
+    """Only one GeneSense at a time: two would fight over the co-processor link and freeze the M10.
+    (Auto boot, the menu's Run Programs and the systemd service could each start one.)"""
+    import fcntl
+    from store import DATA_DIR
+    os.makedirs(DATA_DIR, exist_ok=True)
+    handle = open(os.path.join(DATA_DIR, "genesense.lock"), "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("GeneSense is already running")
+        raise SystemExit(0)
+    return handle
+
+
 if __name__ == "__main__":
-    print("GeneSense M10, server %s" % GENESENSE_URL)
+    import sys
+    from store import DATA_DIR
+    os.makedirs(DATA_DIR, exist_ok=True)
+    log = os.path.join(DATA_DIR, "genesense.log")
+    sys.stdout, sys.stderr = _Log(sys.stdout, log), _Log(sys.stderr, log)
+    _lock = single_instance()
+    print("\n=== GeneSense M10 started %s, server %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), GENESENSE_URL))
     run_tk(make_app())

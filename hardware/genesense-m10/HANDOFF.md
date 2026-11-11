@@ -27,6 +27,7 @@ It is a test device, not a medical device; every screen says so.
 | `voice.py` | Gemini TTS clips in `data/voice/`, playback, and picking the USB sound card. |
 | `fonts/` | Be Vietnam Pro TTFs + `OFL.txt` (keep the licence with the fonts). |
 | `tools/preview.py` | Draws every screen to PNGs on a PC: `python3 tools/preview.py out/`. |
+| `tools/autostart.sh` | Start at power-on as a systemd service: `install`, `remove`, `status`, `log`. |
 
 `data/` is created on the device and is git-ignored. **Never commit a Gemini key or a device token.**
 
@@ -48,7 +49,13 @@ It is a test device, not a medical device; every screen says so.
    - `scp -r genesense-m10 root@10.1.2.3:/root/` (the M10's default password is `dfrobot`)
 4. In the M10's copy of `genesense.py`, set `GEMINI_KEY = "..."`. The key is saved in `data/config.json` on the first run, after which the line can go back to `""`.
 5. Run it from the M10's own menu (Run Programs → root → genesense-m10 → genesense.py), or over SSH with `cd /root/genesense-m10 && python3 genesense.py`. The console shows sensor values, sign-in and upload lines.
-6. **Start at power-on:** turn on "Auto boot" in the M10 menu's service settings, which runs the last program at start.
+6. **Start at power-on.** The M10 menu's "Auto boot" did **not** work for the owner (11 November 2026): after a power cycle the default UNIHIKER screen came back. Use the systemd service instead. Over SSH, run `sh /root/genesense-m10/tools/autostart.sh install`, turn Auto boot off, then restart. The service waits for X (`/tmp/.X11-unix/X0`) and 4 s more, runs with `DISPLAY=:0`, and restarts the program if it crashes. Use `... remove` to undo it, `status` to check it, and `log` to read the output.
+   - **Making start-up robust (in the program itself):**
+     - `tk.Tk()` is retried for 90 s while the screen is not ready, and pinpong `begin()` 3 times.
+     - The window is kept on top of the UNIHIKER menu (`-topmost`, re-raised every 3 s).
+     - A lock file (`data/genesense.lock`) allows only one copy, because two copies would fight over the co-processor.
+     - Everything printed also goes to `data/genesense.log` (kept under 512 KB).
+   - **Not yet confirmed on the device:** whether Auto boot failed because the program crashed at boot, or because the menu covered its window.
 
 pinpong, Pillow, qrcode, pygame and tkinter all come with the M10 image (the `unihiker` library itself uses them), so nothing needs installing.
 

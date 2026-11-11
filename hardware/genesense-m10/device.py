@@ -25,15 +25,22 @@ class Board:
         if platform.machine() != "aarch64" or os.environ.get("GENESENSE_NO_BOARD"):
             print("Board: not a UNIHIKER, using mock values")   # pinpong would hunt for a board on a PC
             return
-        try:
-            from pinpong.board import Board as PinpongBoard, I2C
-            PinpongBoard("UNIHIKER").begin()   # starts the co-processor link (a few seconds)
-            from pinpong.extension.unihiker import accelerometer, button_a, button_b, buzzer, light
-            self._a, self._b, self._buzzer, self._light, self._acc = button_a, button_b, buzzer, light, accelerometer
-            self.i2c = I2C(bus_num=4)
-            self.ok = True
-        except Exception as e:               # not a UNIHIKER, or pinpong missing
-            print("Board: running without the M10's hardware (%s)" % e)
+        for attempt in range(3):             # right after power-on the co-processor may need a moment
+            try:
+                from pinpong.board import Board as PinpongBoard, I2C
+                PinpongBoard("UNIHIKER").begin()   # starts the co-processor link (a few seconds)
+                from pinpong.extension.unihiker import accelerometer, button_a, button_b, buzzer, light
+                self._a, self._b, self._buzzer, self._light, self._acc = button_a, button_b, buzzer, light, accelerometer
+                self.i2c = I2C(bus_num=4)
+                self.ok = True
+                return
+            except ImportError as e:         # pinpong missing: no point trying again
+                print("Board: running without the M10's hardware (%s)" % e)
+                return
+            except Exception as e:
+                print("Board: co-processor not ready (%s), attempt %d" % (e, attempt + 1))
+                time.sleep(4)
+        print("Board: running without the M10's hardware")
 
     def _take(self, wait=0.05):
         return self.io.acquire(timeout=wait)
