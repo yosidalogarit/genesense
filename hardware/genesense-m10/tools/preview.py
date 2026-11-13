@@ -28,10 +28,30 @@ class FakeBoard:
 
 class FakeCloud:
     signed_in, account_name = True, "Nguyễn Thị Lan"
-    pair_code, pair_url, pair_problem, sync_problem, want_pairing = "", "", 0, 0, False
+    pair_code, pair_url, pair_problem, sync_problem, want_pairing, meds_problem = "", "", 0, 0, False, 0
+    medications = [
+        {"id": "m1", "name": "Metformin", "strength": "500 mg", "amount": "1 viên", "meal": "after",
+         "morning": True, "noon": False, "afternoon": False, "evening": True},
+        {"id": "m2", "name": "Amlodipin", "strength": "5 mg", "amount": "1 viên", "meal": "any",
+         "morning": True, "noon": False, "afternoon": False, "evening": False},
+        {"id": "m3", "name": "Vitamin D3", "strength": "", "amount": "1 viên", "meal": "after",
+         "morning": False, "noon": True, "afternoon": False, "evening": False},
+    ]
+
+    def __init__(self):
+        self.taken = {("m3", "noon")}
 
     def take_events(self):
         return []
+
+    def meds_today(self, day):
+        return list(self.medications), set(self.taken)
+
+    def mark_taken(self, day, items):
+        self.taken.update(items)
+
+    def refresh_meds(self):
+        pass
 
 
 class FakeVoice:
@@ -62,9 +82,10 @@ class MemConfig(dict):
 class MemHistory:
     def __init__(self):
         now = time.time()
-        vals = [(72, 98), (76, 97), (81, 96), (69, 98), (74, 97), (88, 95), (115, 94), (79, 97), (73, 98)]
-        self.items = [{"t": int(now - (len(vals) - i) * 43200), "hr": h, "spo2": s, "mock": False, "sent": True,
-                       "local": False, "added": now - (len(vals) - i) * 43200} for i, (h, s) in enumerate(vals)]
+        vals = [(72, 98), (76, 97), (81, 96), (69, 98), (74, 97), (70, 97), (75, 98), (73, 98), (71, 97), (77, 97),
+                (72, 98)]
+        self.items = [{"t": int(now - (len(vals) - i) * 50000), "hr": h, "spo2": s, "mock": False, "sent": True,
+                       "local": False, "added": now - (len(vals) - i) * 50000} for i, (h, s) in enumerate(vals)]
 
     def add(self, hr, spo2, mock, clock_ok):
         it = {"t": int(time.time()), "hr": hr, "spo2": spo2, "mock": mock, "sent": False, "local": False,
@@ -149,6 +170,23 @@ def shots(out):
     app.go("idle")
     app.toast("Đã đăng nhập: Nguyễn Thị Lan", g.SAFE)
     snap("18_idle_mock_toast")
+
+    app.sensor_ok = True
+    app.toast_text = ""
+    app.go("clock")
+    snap("19_clock")
+    app.med_slot = "morning"
+    app.go("medicine")
+    snap("20_medicine")
+    app.go("meds")
+    snap("21_meds")
+    app.result = app.history.add(74, 97, False, True)
+    app.go("trend")
+    snap("22_trend")
+    app.result = app.history.add(96, 93, False, True)
+    snap("23_trend_attention")
+    app.go("result")
+    snap("24_result")
 
     cols = 6
     rows = (len(pics) + cols - 1) // cols

@@ -585,6 +585,38 @@ async def set_medication_intake(
                                   slot=slot, taken=True, taken_at=taken_at)
 
 
+def _course_covers(medication: Medication, day: date) -> bool:
+    start = date.fromisoformat(medication.start_date)
+    return day >= start and not (medication.days and day > start + timedelta(days=medication.days - 1))
+
+
+# A linked GeneSense device (UNIHIKER M10) shows today's medicines at their time and lets the person tap
+# "Đã uống". It reads and ticks the same schedule as the app, with its own token instead of a session.
+@app.get("/api/devices/medications")
+async def device_medications(day: date = Query(...), device: Device = Depends(current_device),
+                             session: AsyncSession = Depends(get_session)):
+    user = await session.get(User, device.user_id)
+    if not user:
+        raise HTTPException(401, "Máy đo chưa được kết nối hoặc đã bị ngắt kết nối.")
+    medications = [m for m in await list_medications(user, session) if _course_covers(m, day)]
+    intakes = await list_medication_intakes(day, user, session)
+    return {
+        "day": day.isoformat(),
+        "medications": [MedicationResult.model_validate(m).model_dump(mode="json") for m in medications],
+        "taken": [{"medication_id": i.medication_id, "slot": i.slot} for i in intakes],
+    }
+
+
+@app.put("/api/devices/medications/{medication_id}/intakes/{slot}", response_model=MedicationIntakeResult)
+async def device_medication_intake(medication_id: str, slot: Literal["morning", "noon", "afternoon", "evening"],
+                                   payload: MedicationIntakeUpdate, device: Device = Depends(current_device),
+                                   session: AsyncSession = Depends(get_session)):
+    user = await session.get(User, device.user_id)
+    if not user:
+        raise HTTPException(401, "Máy đo chưa được kết nối hoặc đã bị ngắt kết nối.")
+    return await set_medication_intake(medication_id, slot, payload, user, session)
+
+
 @app.post("/api/medications", response_model=MedicationResult, status_code=201)
 async def add_medication(payload: MedicationInput, user: User = Depends(current_user),
                          session: AsyncSession = Depends(get_session)):

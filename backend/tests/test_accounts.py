@@ -839,6 +839,41 @@ def test_device_signs_itself_out(client):
     assert client.get("/api/devices").json() == []
 
 
+def test_device_reads_todays_medicines_and_ticks_them_for_its_own_account(client):
+    device = TestClient(main.app, base_url="http://localhost:8000", headers=HEADERS)
+    pairing = device.post("/api/devices/pair", json={"name": "GeneSense-M10"}).json()
+    login(client)
+    client.put("/api/profile", json=PROFILE)
+    client.post("/api/devices/pair/approve", json={"code": pairing["user_code"]})
+    token = device.post("/api/devices/pair/token", json={"device_code": pairing["device_code"]}).json()["token"]
+    auth_header = {"Authorization": "Bearer " + token}
+    today = datetime.now(timezone.utc).date()
+    current = client.post("/api/medications", json={"name": "Metformin", "strength": "500 mg", "amount": "1 viên",
+                                                     "start_date": today.isoformat(), "morning": True, "evening": True}).json()
+    client.post("/api/medications", json={"name": "Hết đợt", "start_date": (today - timedelta(days=10)).isoformat(),
+                                          "days": 3, "morning": True})
+    listed = device.get(f"/api/devices/medications?day={today.isoformat()}", headers=auth_header)
+    assert listed.status_code == 200
+    body = listed.json()
+    assert [m["name"] for m in body["medications"]] == ["Metformin"] and body["taken"] == []
+    url = f"/api/devices/medications/{current['id']}/intakes/morning"
+    assert device.put(url, json={"scheduled_on": today.isoformat(), "taken": True}, headers=auth_header).status_code == 200
+    assert client.get(f"/api/medications/intakes?scheduled_on={today.isoformat()}").json()[0]["slot"] == "morning"
+    assert device.get(f"/api/devices/medications?day={today.isoformat()}", headers=auth_header).json()["taken"] == [
+        {"medication_id": current["id"], "slot": "morning"}]
+    assert device.put(f"/api/devices/medications/{current['id']}/intakes/noon",
+                      json={"scheduled_on": today.isoformat(), "taken": True}, headers=auth_header).status_code == 422
+    # another account's medicine is not reachable, and a wrong token is refused
+    client.cookies.clear()
+    login(client)
+    other = client.post("/api/medications", json={"name": "Của người khác", "start_date": today.isoformat(),
+                                                   "morning": True}).json()
+    assert device.put(f"/api/devices/medications/{other['id']}/intakes/morning",
+                      json={"scheduled_on": today.isoformat(), "taken": True}, headers=auth_header).status_code == 404
+    assert device.get(f"/api/devices/medications?day={today.isoformat()}",
+                      headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
 def test_wrong_device_codes_never_lock_out(client):
     login(client)
     client.put("/api/profile", json=PROFILE)

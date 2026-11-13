@@ -6,6 +6,8 @@ Same server API as the K10 (backend/app/devices.py):
   POST /api/devices/readings      -> one reading (Bearer token)
   GET  /api/devices/me            -> whose profile; 401 = the device was disconnected
   DELETE /api/devices/me          -> sign out
+  GET  /api/devices/medications   -> today's medicines from the app, and which were already ticked
+  PUT  /api/devices/medications/{id}/intakes/{slot} -> "Đã uống"
 """
 import hashlib
 import json
@@ -41,6 +43,14 @@ class Cloud:
         self._pause_until = 0.0
         self._logout = False
         self._new_code = False
+        # today's medicines (from the app's "Thuốc" list); kept in the config so they work without Wi-Fi too
+        cached = config.get("meds_cache") or {}
+        self.meds = {"day": cached.get("day", ""), "medications": cached.get("medications", []),
+                     "taken": set(tuple(x) for x in cached.get("taken", []))}
+        self.meds_problem = 0
+        self._meds_at = 0.0
+        self._meds_now = True
+        self._intake_pause = 0.0
 
     # ---------- state the screen reads ----------
     @property
@@ -62,6 +72,74 @@ class Cloud:
 
     def new_code(self):
         self._new_code = True
+
+    # ---------- medicines ----------
+    def meds_today(self, day):
+        """(medications, taken set of (id, slot)) for that day, or (None, set()) when not fetched yet."""
+        with self.lock:
+            if self.meds["day"] != day:
+                return None, set()
+            return list(self.meds["medications"]), set(self.meds["taken"])
+
+    def refresh_meds(self):
+        self._meds_now = True
+
+    def mark_taken(self, day, items):
+        """items: [(medication id, slot)]. Shown as taken at once; sent when there is a connection."""
+        with self.lock:
+            if self.meds["day"] == day:
+                self.meds["taken"].update(items)
+            self._save_meds()
+        queue = list(self.config.get("intake_queue", []))
+        queue += [{"day": day, "id": mid, "slot": slot} for mid, slot in items]
+        self.config.set(intake_queue=queue[-100:])
+        self._intake_pause = 0
+
+    def _save_meds(self):                    # call with the lock held
+        self.config.set(meds_cache={"day": self.meds["day"], "medications": self.meds["medications"],
+                                    "taken": sorted(list(x) for x in self.meds["taken"])})
+
+    def _sync_meds(self):
+        if time.time() < 1700000000:         # no clock yet: "today" is unknown
+            return
+        day = time.strftime("%Y-%m-%d")
+        now = time.time()
+        if not (self._meds_now or now - self._meds_at > 600 or self.meds["day"] != day):
+            return
+        self._meds_now = False
+        self._meds_at = now
+        code, j = self.request("GET", "/api/devices/medications?day=" + day, token=self.config.get("device_token"))
+        if code == 401:
+            self._forget()
+            self._event("revoked")
+            return
+        if code != 200:
+            self.meds_problem = code
+            self._meds_at = now - 540        # try again in a minute
+            return
+        self.meds_problem = 0
+        pending = set((q["id"], q["slot"]) for q in self.config.get("intake_queue", []) if q.get("day") == day)
+        with self.lock:
+            self.meds = {"day": day, "medications": j.get("medications", []),
+                         "taken": set((t["medication_id"], t["slot"]) for t in j.get("taken", [])) | pending}
+            self._save_meds()
+        self._event("meds")
+
+    def _send_intakes(self):
+        queue = list(self.config.get("intake_queue", []))
+        if not queue or time.time() < self._intake_pause:
+            return
+        item = queue[0]
+        code, _ = self.request("PUT", "/api/devices/medications/%s/intakes/%s" % (item["id"], item["slot"]),
+                               {"scheduled_on": item["day"], "taken": True}, token=self.config.get("device_token"))
+        if code == 401:
+            self._forget()
+            self._event("revoked")
+        elif code in (200, 404, 422):       # saved, or the medicine/day no longer exists: drop it
+            self.config.set(intake_queue=[q for q in self.config.get("intake_queue", []) if q != item])
+            print("GeneSense: medicine intake %s (HTTP %d)" % ("saved" if code == 200 else "dropped", code))
+        else:
+            self._intake_pause = time.time() + 30
 
     def logout(self):
         self._logout = True
@@ -114,12 +192,19 @@ class Cloud:
                         last_check = time.time()
                     if self.signed_in:
                         self._sync_one()
+                    if self.signed_in:
+                        self._sync_meds()
+                    if self.signed_in:
+                        self._send_intakes()
             except Exception as e:           # never let the loop die
                 print("GeneSense loop: %s" % e)
             time.sleep(0.5 if not self.signed_in else 2)
 
     def _forget(self):
-        self.config.set(device_token="", account_name="")
+        self.config.set(device_token="", account_name="", meds_cache={}, intake_queue=[])
+        with self.lock:
+            self.meds = {"day": "", "medications": [], "taken": set()}
+        self._meds_now = True
         with self.lock:
             self.pair_code = self.pair_url = ""
         self._device_code = ""
