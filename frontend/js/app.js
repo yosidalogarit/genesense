@@ -2222,12 +2222,12 @@ function renderAssistantResult(result, createdAt = null) {
   const findings = result.findings || [];
   const missing = result.missing_data || [];
   $("#assistant-result").innerHTML =
-    `<div class="panel-heading"><h2>Kết quả</h2>${createdAt ? `<small>${esc(date(createdAt))}</small>` : ""}</div>` +
+    `<div class="panel-heading"><h2>Tóm tắt</h2>${createdAt ? `<small>${esc(date(createdAt))}</small>` : ""}</div>` +
     `<p class="assistant-summary">${esc(result.summary)}</p>` +
     (findings.length ? `<div class="assistant-findings">${findings.map(item =>
-      `<article class="assistant-finding"><h3>${esc(item.topic)}</h3><p><strong>Căn cứ:</strong> ${esc(item.evidence)}</p><p>${esc(item.interpretation)}</p><p class="assistant-next"><strong>Nên làm:</strong> ${esc(item.next_step)}</p></article>`
+      `<article class="assistant-finding"><h3>${esc(item.topic)}</h3><p>${esc(item.interpretation)}</p><p class="assistant-next"><strong>Nên làm:</strong> ${esc(item.next_step)}</p><details class="assistant-evidence"><summary>Xem căn cứ</summary><p>${esc(item.evidence)}</p></details></article>`
     ).join("")}</div>` : "") +
-    (missing.length ? `<div class="assistant-missing"><h3>Cần bổ sung hoặc kiểm tra</h3><ul>${missing.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : "") +
+    (missing.length ? `<div class="assistant-missing"><h3>Cần bổ sung</h3><ul>${missing.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : "") +
     `<p class="note assistant-disclaimer">${esc(result.disclaimer)}</p>`;
   if (state.view === "assistant") $("#assistant-result").scrollIntoView({ behavior: "smooth", block: "start" });
 }
