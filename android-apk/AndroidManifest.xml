@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="vn.genesense.app" android:versionCode="5" android:versionName="0.4.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="vn.genesense.app" android:versionCode="6" android:versionName="0.4.1">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
@@ -9,10 +9,17 @@
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <application android:icon="@mipmap/launcher" android:label="GeneSense" android:theme="@android:style/Theme.Material.Light" android:usesCleartextTraffic="false" android:allowBackup="false">
-        <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="unspecified">
+        <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="unspecified" android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Google sign-in comes back as genesense://auth?code=... -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="genesense" android:host="auth" />
             </intent-filter>
         </activity>
     </application>

@@ -37,7 +37,7 @@ public class MainActivity extends Activity {
         setContentView(web);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
-        settings.setUserAgentString(settings.getUserAgentString() + " GeneSenseAndroid/0.4.0");
+        settings.setUserAgentString(settings.getUserAgentString() + " GeneSenseAndroid/0.4.1");
         settings.setDomStorageEnabled(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
@@ -71,7 +71,20 @@ public class MainActivity extends Activity {
                 catch (Exception error) { files = null; return false; }
             }
         });
-        web.loadUrl(HOME);
+        web.loadUrl(signInReturn(getIntent()));
+    }
+
+    // Google sign-in ends at genesense://auth?code=...; the page redeems the code from "#app-login?...".
+    private String signInReturn(Intent intent) {
+        Uri data = intent == null ? null : intent.getData();
+        if (data == null || !"genesense".equals(data.getScheme()) || !"auth".equals(data.getHost())) return HOME;
+        return HOME + "#app-login?" + (data.getEncodedQuery() == null ? "" : data.getEncodedQuery());
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String url = signInReturn(intent);
+        if (!HOME.equals(url)) web.loadUrl(url);
     }
 
     public void requestBluetoothPermissions() {

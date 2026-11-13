@@ -16,11 +16,13 @@ The two platforms share the API, user accounts and business logic.
 ## Google sign-in
 
 Web uses the existing Google OIDC flow with state, nonce and PKCE.
-Native apps initiate a five-minute handoff, then open the system browser for Google sign-in.
-After completion the user switches back to the app. The app redeems the handoff with its
-private random verifier and receives the existing HttpOnly session cookie.
-The handoff is consumed atomically and cannot be redeemed a second time.
-The verifier and application session are never included in a redirect URL.
+Native apps start a five-minute attempt with the SHA-256 of a private random verifier, then sign in
+with Google in Apple's sign-in sheet (iOS) or the system browser (Android). The callback re-keys the
+attempt under a fresh one-time code and redirects to `genesense://auth?code=...`, which only the app on
+that phone receives (Android reopens the page at `#app-login?code=...`). The app redeems code plus
+verifier at `/api/auth/mobile/redeem` and receives the existing HttpOnly session cookie.
+The id in the sign-in link is never redeemable, so a link sent to someone else cannot sign the sender in.
+The code is consumed atomically; the verifier and session are never included in a redirect URL.
 
 Set these variables in the existing **Gene Sense / genesense** Vercel project before use:
 

@@ -143,6 +143,8 @@ def test_clinical_review_requires_consent_and_stays_account_scoped(client, monke
     assert duplicate.status_code == 200
     assert client.delete("/api/clinical-reviews/" + review_id).status_code == 204
     assert len(client.get("/api/clinical-reviews").json()) == 1
+    monkeypatch.setattr(main, "CLINICAL_REVIEWS_PER_HOUR", 1)
+    assert client.post("/api/clinical-review", json={"consent": True}).status_code == 429
     remaining_id = client.get("/api/clinical-reviews").json()[0]["id"]
     assert client.post("/api/auth/logout").status_code == 200
     second = login(client)

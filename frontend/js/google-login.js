@@ -1,6 +1,12 @@
-const nativeApp = () => /GeneSenseAndroid\//.test(navigator.userAgent) || document.documentElement.classList.contains("ios-app");
+// Google sign-in. The website uses the normal redirect. The apps cannot (Google blocks sign-in inside a web view), so:
+// the app makes a random verifier, the server sends Google's result back as genesense://auth?code=..., and only
+// the code plus this app's verifier gives a session. iOS gets that link from its sign-in sheet (gsNative.authSession);
+// Android reopens the app at "#app-login?code=...". The verifier waits in localStorage, so Android survives the
+// app being closed while the browser is open.
+const android = () => /GeneSenseAndroid\//.test(navigator.userAgent);
+const nativeApp = () => android() || document.documentElement.classList.contains("ios-app");
 const storageKey = "genesense-app-login";
-let polling = false;
+const RETURN_ROUTE = "#app-login?";
 
 async function post(path, body) {
   const controller = new AbortController();
@@ -17,43 +23,43 @@ async function post(path, body) {
   } finally { clearTimeout(timeout); }
 }
 
+function takeVerifier() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(storageKey) || "null"); localStorage.removeItem(storageKey); } catch {}
+  return saved && Date.now() < saved.expires ? saved.verifier : null;
+}
+
+// The query part of genesense://auth?... : redeem the code with this app's verifier, then reload signed in.
+async function finish(query, showMessage) {
+  const params = new URLSearchParams(query);
+  const verifier = takeVerifier();
+  if (params.get("error") || !params.get("code") || !verifier) throw new Error("Phiên đăng nhập đã hết hạn. Hãy thử lại.");
+  showMessage("Đang đăng nhập…");
+  await post("redeem", { code: params.get("code"), verifier });
+  location.reload();
+}
+
+// Android comes back to the app at "#app-login?code=...".
 export async function resumeGoogleLogin(showMessage) {
-  if (!nativeApp() || polling) return;
-  const saved = sessionStorage.getItem(storageKey);
-  if (!saved) return;
-  let attempt;
-  try { attempt = JSON.parse(saved); } catch { sessionStorage.removeItem(storageKey); return; }
-  polling = true;
-  showMessage("Hoàn tất đăng nhập trong trình duyệt, rồi quay lại GeneSense.");
-  try {
-    while (Date.now() < attempt.expires) {
-      // Returning to the app resumes this loop without exposing a session in a URL.
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      if (document.hidden) continue;
-      const data = await post("poll", { id: attempt.id, verifier: attempt.verifier });
-      if (data.status === "authenticated") {
-        sessionStorage.removeItem(storageKey);
-        location.reload();
-        return;
-      }
-    }
-    throw new Error("Phiên đăng nhập đã hết hạn. Hãy thử lại.");
-  } catch (error) {
-    showMessage(error.message);
-    sessionStorage.removeItem(storageKey);
-  } finally { polling = false; }
+  if (!location.hash.startsWith(RETURN_ROUTE)) return;
+  const query = location.hash.slice(RETURN_ROUTE.length);
+  window.history.replaceState(null, "", location.pathname + location.search);
+  try { await finish(query, showMessage); } catch (error) { showMessage(error.message); }
 }
 
 export async function loginWithGoogle(showMessage) {
   if (!nativeApp()) { location.assign("/api/auth/google"); return; }
-  if (polling) { showMessage("Hãy hoàn tất đăng nhập trong trình duyệt rồi quay lại app."); return; }
+  const ios = !android();
+  if (ios && !window.gsNative?.authSession) { showMessage("Hãy cập nhật ứng dụng GeneSense để đăng nhập bằng Google."); return; }
   try {
     const verifier = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, "0")).join("");
     const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
     const challenge = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
     const data = await post("start", { challenge });
-    sessionStorage.setItem(storageKey, JSON.stringify({ id: data.id, verifier, expires: Date.now() + 300000 }));
-    location.assign(data.url);
-    void resumeGoogleLogin(showMessage);
+    localStorage.setItem(storageKey, JSON.stringify({ verifier, expires: Date.now() + 300000 }));
+    if (!ios) { location.assign(data.url); return; }   // Android opens the browser, then reopens the app
+    const back = await window.gsNative.authSession(data.url);
+    if (!back) { takeVerifier(); return; }            // closed the sign-in sheet
+    await finish(back.slice(back.indexOf("?") + 1), showMessage);
   } catch (error) { showMessage(error.message); }
 }
