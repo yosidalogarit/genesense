@@ -6,13 +6,13 @@ from datetime import datetime, timedelta, timezone
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .database import get_session
-from .models import (Assessment, Avatar, CareCodeFailure, CareInvite, CareLink, Device, DevicePairing, Feedback, LoginSession,
+from .models import (AppLoginAttempt, Assessment, Avatar, CareCodeFailure, CareInvite, CareLink, ClinicalReview, Device, DevicePairing, Feedback, LoginSession,
                      MedicalRecord, Medication, MedicationIntake, User)
 
 settings = get_settings()
@@ -74,9 +74,16 @@ async def auth_config():
 
 
 @router.get("/google")
-async def google_login(request: Request):
+async def google_login(request: Request, session: AsyncSession = Depends(get_session)):
     if not settings.google_enabled:
         return RedirectResponse("/?auth_error=unavailable", status_code=303)
+    request.session.pop("mobile_attempt", None)
+    mobile_id = request.query_params.get("mobile")
+    if mobile_id:
+        attempt = await session.get(AppLoginAttempt, mobile_id)
+        if not attempt or attempt.user_id or attempt.expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+            raise HTTPException(400, "Phiên đăng nhập ứng dụng đã hết hạn.")
+        request.session["mobile_attempt"] = mobile_id
     try:
         return await oauth.google.authorize_redirect(
             request, settings.app_base_url.rstrip("/") + "/api/auth/google/callback", prompt="select_account")
@@ -98,6 +105,7 @@ async def google_callback(request: Request, session: AsyncSession = Depends(get_
     except Exception:
         request.session.clear()
         return RedirectResponse("/?auth_error=signin", status_code=303)
+    mobile_id = request.session.get("mobile_attempt")
     request.session.clear()
     sub = claims["sub"]
     user = await session.scalar(select(User).where(User.google_sub == sub))
@@ -113,6 +121,14 @@ async def google_callback(request: Request, session: AsyncSession = Depends(get_
         user.email = claims.get("email") or user.email
         if not user.onboarding_completed and claims.get("name"):
             user.display_name = claims["name"][:100]
+    if mobile_id:
+        await session.execute(update(AppLoginAttempt).where(
+            AppLoginAttempt.id == mobile_id, AppLoginAttempt.user_id.is_(None),
+            AppLoginAttempt.expires_at > datetime.now(timezone.utc)
+        ).values(user_id=user.id))
+        await session.commit()
+        from .mobile_auth import completed_page
+        return completed_page()
     response = RedirectResponse("/", status_code=303)
     return await issue_session(request, response, user, session)
 
@@ -123,7 +139,7 @@ async def purge_old_trial_accounts(session: AsyncSession) -> int:
     ids = list(await session.scalars(select(User.id).where(User.is_demo, User.created_at < cutoff)))
     if not ids:
         return 0
-    for model in (LoginSession, Assessment, Feedback, MedicalRecord, CareCodeFailure, Avatar, MedicationIntake, Medication,
+    for model in (AppLoginAttempt, LoginSession, Assessment, ClinicalReview, Feedback, MedicalRecord, CareCodeFailure, Avatar, MedicationIntake, Medication,
                   Device, DevicePairing):
         await session.execute(delete(model).where(model.user_id.in_(ids)))
     await session.execute(delete(CareInvite).where(CareInvite.patient_id.in_(ids)))

@@ -142,6 +142,11 @@ extension WebModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         if action.shouldPerformDownload { return .download }
         guard let url = action.request.url else { return .cancel }
+        if url.host == Self.home.host, url.path == "/api/auth/google",
+           URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "mobile" }) == true {
+            await UIApplication.shared.open(url)
+            return .cancel
+        }
         if url.host == Self.home.host || ["about", "blob", "data"].contains(url.scheme ?? "") { return .allow }
         // Other sites, phone numbers and mail open in their own apps.
         await UIApplication.shared.open(url)

@@ -1,6 +1,8 @@
-# GeneSense handoff (updated 2 October 2026)
+# GeneSense handoff (upstream notes; AI update 2 November 2026)
 
-Read this before doing anything. It describes the current state only. The longer history, with the reason for each change, is on the Notion page "GeneSense: UI redesign change log and handoff (30 Sep 2026)": https://app.notion.com/p/3ebf775108a281aa8805d7a4f21b4cb9
+> **Checkout GS1 hiện tại:** Hướng dẫn triển khai Trợ lý AI, dữ liệu được gửi, quyền đồng ý, API, kiểm thử và giới hạn nằm trong [AI_HANDOFF.md](AI_HANDOFF.md). Phần bên dưới là handoff lịch sử từ upstream; các thông tin như đường dẫn máy, nhánh, commit, cache, số bài test và trạng thái hosting có thể đã thay đổi. Đối chiếu mã nguồn và môi trường hiện tại trước khi sử dụng.
+
+The section below is an archived upstream snapshot from October 2026. For this checkout's AI assistant, read AI_HANDOFF.md first. The longer upstream history is on the Notion page "GeneSense: UI redesign change log and handoff (30 Sep 2026)": https://app.notion.com/p/3ebf775108a281aa8805d7a4f21b4cb9
 
 ## 1. Current state
 

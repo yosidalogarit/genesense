@@ -43,6 +43,15 @@ class LoginSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class AppLoginAttempt(Base):
+    __tablename__ = "app_login_attempts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    challenge: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class Assessment(Base):
     __tablename__ = "assessments"
 
@@ -58,6 +67,17 @@ class Assessment(Base):
     pgrs_score: Mapped[float] = mapped_column(Float)
     brs_score: Mapped[float] = mapped_column(Float)
     vital_score: Mapped[float] = mapped_column(Float)
+    result: Mapped[dict] = mapped_column(JSON)
+
+
+class ClinicalReview(Base):
+    """Account-owned AI summaries; source images are not copied here."""
+
+    __tablename__ = "clinical_reviews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     result: Mapped[dict] = mapped_column(JSON)
 
 

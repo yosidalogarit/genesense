@@ -8,7 +8,7 @@ $env:Path = "$java;$env:Path"
 $root = $PSScriptRoot
 $build = Join-Path $root 'build'
 New-Item -ItemType Directory -Force (Join-Path $build 'classes'), (Join-Path $build 'dex') | Out-Null
-& (Join-Path $java 'javac.exe') --release 8 -g:none -cp $androidJar -d (Join-Path $build 'classes') (Join-Path $root 'src\vn\genesense\app\MainActivity.java')
+& (Join-Path $java 'javac.exe') --release 8 -encoding UTF-8 -g:none -cp $androidJar -d (Join-Path $build 'classes') (Join-Path $root 'src\vn\genesense\app\MainActivity.java')
 if ($LASTEXITCODE -ne 0) { throw 'Java compile failed' }
 & (Join-Path $java 'jar.exe') cf (Join-Path $build 'classes.jar') -C (Join-Path $build 'classes') .
 if ($LASTEXITCODE -ne 0) { throw 'JAR packaging failed' }

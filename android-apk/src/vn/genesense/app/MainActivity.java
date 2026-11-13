@@ -37,6 +37,7 @@ public class MainActivity extends Activity {
         setContentView(web);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
+        settings.setUserAgentString(settings.getUserAgentString() + " GeneSenseAndroid/0.4.0");
         settings.setDomStorageEnabled(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
@@ -47,6 +48,15 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(true);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                Uri target = Uri.parse(url);
+                if ("https".equals(target.getScheme()) && "genesense-five.vercel.app".equals(target.getHost()) &&
+                    "/api/auth/google".equals(target.getPath()) && target.getQueryParameter("mobile") != null) {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW, target)); }
+                    catch (android.content.ActivityNotFoundException error) {
+                        Toast.makeText(MainActivity.this, "Cần trình duyệt để đăng nhập Google", Toast.LENGTH_LONG).show();
+                    }
+                    return true;
+                }
                 if (url.startsWith(HOME)) return false;
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 return true;
