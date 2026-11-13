@@ -21,6 +21,12 @@ MOCK_SECONDS = 15                            # one measurement with mock values
 MOVE_LIMIT = 0.15                            # how much moving the M10 restarts the count, in g. Bigger = less strict
 VOICE_VOLUME = 0.8                           # 0.1 quiet .. 1.0 loud
 TIMEZONE = "Asia/Ho_Chi_Minh"
+CLOCK_AFTER = 45                             # seconds without a touch: the home screen becomes a big clock
+SLEEP_AFTER = 120                            # seconds without a touch: the screen dims (a touch wakes it)
+SLEEP_LEVEL = 10                             # dimmed brightness, %
+NIGHT_LEVEL = 40                             # at most this bright at night in a dark room, %
+MED_TIMES = {"morning": 7 * 60, "noon": 11 * 60 + 30, "afternoon": 17 * 60, "evening": 20 * 60}   # medicine times;
+                                             # the app only says "Sáng/Trưa/Chiều/Tối". Changed on the device: Menu > Thuốc
 # ========================================================
 
 os.environ["TZ"] = TIMEZONE
@@ -40,8 +46,14 @@ from store import Config, History, log_csv, sd_folder  # noqa: E402
 from voice import CLIPS, Voice, usb_card  # noqa: E402
 
 REMIND_NAMES = ["Buổi sáng", "Buổi trưa", "Buổi tối"]
-MENU = [("history", "Lịch sử đo"), ("reminders", "Nhắc đo"), ("brightness", "Độ sáng"), ("info", "Thông tin máy"),
-        ("logout", "Đăng xuất"), ("clear", "Xóa lịch sử"), ("idle", "Quay lại")]
+MENU = [("history", "Lịch sử đo"), ("reminders", "Nhắc đo"), ("meds", "Thuốc"), ("brightness", "Độ sáng"),
+        ("info", "Thông tin máy"), ("logout", "Đăng xuất"), ("idle", "Quay lại")]
+MED_SLOTS = [("morning", "Sáng"), ("noon", "Trưa"), ("afternoon", "Chiều"), ("evening", "Tối")]
+MEAL = {"before": "trước ăn", "after": "sau ăn"}
+WEEKDAYS = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
+SHORT_DAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+# screens that turn into the clock, and dim, when nobody touches the M10 for a while
+RESTING = ("idle", "menu", "history", "info", "reminders", "meds", "brightness", "result", "trend")
 
 
 def level_hr(n):
@@ -85,6 +97,21 @@ def clock_ok():                              # the M10 has no clock battery: the
 
 def hhmm(minutes):
     return "%02d:%02d" % (minutes // 60, minutes % 60)
+
+
+def today():
+    return time.strftime("%Y-%m-%d")
+
+
+def ago(t):                                  # "2 giờ trước"
+    d = max(0, time.time() - t)
+    if d < 90:
+        return "vừa xong"
+    if d < 3600:
+        return "%d phút trước" % (d // 60)
+    if d < 86400:
+        return "%d giờ trước" % (d // 3600)
+    return "%d ngày trước" % (d // 86400)
 
 
 class Network:
@@ -156,6 +183,19 @@ class App:
         self.snooze_until = 0.0
         self.edit_slot = 0
         self.edit_minutes = 7 * 60
+        self.edit_kind = "remind"            # or "med": which time the edit screen changes
+        # medicines: times on this device, which were asked about today
+        self.med_times = dict(MED_TIMES)
+        self.med_times.update(self.config.get("med_times") or {})
+        self.med_done = self.config.get("med_done") or {}
+        self.med_slot = ""
+        self.med_said = 0
+        self.last_med_voice = 0.0
+        self.med_snooze = {}
+        # clock and screen sleep
+        self.last_touch = time.monotonic()
+        self.asleep = False
+        self.dark_night = False
         # screen brightness (the menu's "Độ sáng"), kept between runs
         self.backlight = Backlight(board.io if board.ok else None)
         self.brightness = int(self.config.get("brightness", 0) or (self.backlight.get() or 100))
@@ -175,11 +215,32 @@ class App:
     def measure_seconds(self):
         return MEASURE_SECONDS if self.sensor_ok else MOCK_SECONDS
 
-    def go(self, screen):
+    def go(self, screen, wake=True):
         self.screen = screen
         self.since = time.monotonic()
         self.cloud.want_pairing = screen == "pair"
         self.dirty = True
+        if wake:
+            self.wake()
+
+    # ---------- clock, sleep, brightness ----------
+    def active_level(self):
+        return min(self.brightness, NIGHT_LEVEL) if self.dark_night else self.brightness
+
+    def wake(self):
+        self.last_touch = time.monotonic()
+        if self.asleep:
+            self.asleep = False
+            self.backlight.set(self.active_level(), urgent=True)
+            self.dirty = True
+
+    def rest_tick(self, now):
+        quiet = now - self.last_touch
+        if self.screen in RESTING and self.screen != "clock" and quiet > CLOCK_AFTER:
+            self.go("clock", wake=False)
+        if not self.asleep and (self.screen in RESTING or self.screen == "clock") and quiet > SLEEP_AFTER:
+            self.asleep = True
+            self.backlight.set(SLEEP_LEVEL)
 
     def toast(self, text, level=SAFE, seconds=3.5):
         if text != self.toast_text or time.monotonic() > self.toast_until:
@@ -188,10 +249,14 @@ class App:
         self.dirty = True
 
     def calm(self):                          # nothing going on: a reminder may show
-        return self.screen in ("idle", "history", "info", "result")
+        return self.screen in ("idle", "history", "info", "result", "clock", "trend", "meds")
 
     # ---------- input ----------
     def tap(self, x, y):
+        if self.asleep:                      # a touch on the dimmed screen only wakes it
+            self.wake()
+            return
+        self.last_touch = time.monotonic()
         if self.hits_screen != self.screen:  # the screen changed and is not drawn yet: these areas are old
             return
         for x0, y0, x1, y1, action in reversed(self.hits):
@@ -202,6 +267,10 @@ class App:
                 return
 
     def button(self, which):                 # "A" or "B" on the M10's side
+        if self.asleep:
+            self.wake()
+            return
+        self.last_touch = time.monotonic()
         if self.hits_screen != self.screen:
             return
         if self.screen == "menu":            # B moves through the tiles (and "Về"), A opens
@@ -245,15 +314,46 @@ class App:
         elif name.startswith("menu:"):
             self.menu_open(name[5:])
         elif name.startswith("slot:"):
+            self.edit_kind = "remind"
             self.edit_slot = int(name[5:])
             m = self.reminders[self.edit_slot]
             self.edit_minutes = m if m >= 0 else [7 * 60, 11 * 60 + 30, 19 * 60][self.edit_slot]
             self.go("edit")
+        elif name.startswith("medslot:"):
+            self.edit_kind = "med"
+            self.edit_slot = int(name[8:])
+            self.edit_minutes = self.med_times[MED_SLOTS[self.edit_slot][0]]
+            self.go("edit")
+        elif name == "medsback":
+            self.go("meds")
+        elif name.startswith("taken:"):
+            self.take_medicine(name[6:])
+        elif name == "medlater":
+            self.med_snooze[self.med_slot] = time.monotonic() + 10 * 60
+            self.toast("Sẽ nhắc lại sau 10 phút", SAFE, 3)
+            self.go("idle")
+        elif name == "trend":
+            self.go("trend")
+        elif name == "clear":
+            if time.monotonic() > self.clear_confirm_until:
+                self.clear_confirm_until = time.monotonic() + 4
+                self.toast("Chạm lần nữa để xóa", ATTN, 4)
+                return
+            self.history.clear()
+            self.result = None
+            self.toast("Đã xóa lịch sử trên máy", SAFE)
+            self.go("idle")
         elif name.startswith("light:"):
             self.set_brightness(int(name[6:]) if name[6] not in "+-" else self.brightness + int(name[6:]))
         elif name.startswith("adj:"):
             self.edit_minutes = (self.edit_minutes + int(name[4:])) % (24 * 60)
             self.dirty = True
+        elif name == "save" and self.edit_kind == "med":
+            slot = MED_SLOTS[self.edit_slot][0]
+            self.med_times[slot] = self.edit_minutes
+            self.config.set(med_times=self.med_times)
+            self.toast("Thuốc buổi %s lúc %s" % (MED_SLOTS[self.edit_slot][1].lower(), hhmm(self.edit_minutes)), SAFE, 2.5)
+            self.go("meds")
         elif name in ("save", "off"):
             self.reminders[self.edit_slot] = self.edit_minutes if name == "save" else -1
             self.remind_done[self.edit_slot] = -1
@@ -263,16 +363,7 @@ class App:
 
     def menu_open(self, item):
         self.menu_sel = [k for k, _ in MENU].index(item)
-        if item == "clear":
-            if time.monotonic() > self.clear_confirm_until:
-                self.clear_confirm_until = time.monotonic() + 4
-                self.toast("Chạm lần nữa để xóa", ATTN, 4)
-                return
-            self.history.clear()
-            self.result = None
-            self.toast("Đã xóa lịch sử trên máy", SAFE)
-            self.go("idle")
-        elif item == "logout":
+        if item == "logout":
             if time.monotonic() > self.clear_confirm_until:
                 self.clear_confirm_until = time.monotonic() + 4
                 self.toast("Chạm lần nữa để đăng xuất", ATTN, 4)
@@ -280,11 +371,13 @@ class App:
             self.cloud.logout()
             self.go("pair")
         else:
+            if item == "meds":
+                self.cloud.refresh_meds()
             self.go(item)
 
     def set_brightness(self, percent):
         self.brightness = min(100, max(10, int(round(percent / 10.0)) * 10))
-        if self.backlight.set(self.brightness):
+        if self.backlight.set(self.active_level()):
             self.config.set(brightness=self.brightness)
         self.dirty = True
 
@@ -456,6 +549,79 @@ class App:
             return "Chờ Wi-Fi để lưu vào hồ sơ"
         return "Đang lưu vào hồ sơ..."
 
+    # ---------- medicines ----------
+    def meds_due(self, slot, meds, taken):
+        return [m for m in (meds or []) if m.get(slot) and (m["id"], slot) not in taken]
+
+    def due_slot(self):
+        """The latest of today's medicine times that has passed and still has medicines not taken, or ""."""
+        if not clock_ok():
+            return ""
+        meds, taken = self.cloud.meds_today(today())
+        tm = time.localtime()
+        mins = tm.tm_hour * 60 + tm.tm_min
+        found = ""
+        for slot, _ in MED_SLOTS:
+            if self.med_times[slot] <= mins and self.meds_due(slot, meds, taken):
+                found = slot
+        return found
+
+    def take_medicine(self, slot):
+        meds, taken = self.cloud.meds_today(today())
+        due = self.meds_due(slot, meds, taken)
+        if due:
+            self.cloud.mark_taken(today(), [(m["id"], slot) for m in due])
+        self.toast("Đã ghi: uống thuốc buổi %s" % dict(MED_SLOTS)[slot].lower(), SAFE)
+        self.voice.say("ok", cut=True)
+        self.go("idle" if self.screen == "medicine" else self.screen)
+
+    def medicine_tick(self, now):
+        if self.screen == "medicine":
+            if now - self.last_med_voice > 60 and self.med_said < 3 and self.voice.idle():
+                self.last_med_voice = now
+                self.med_said += 1
+                self.voice.say("medicine")
+            return
+        if not clock_ok() or not self.cloud.signed_in or not self.calm():
+            return
+        day = today()
+        meds, taken = self.cloud.meds_today(day)
+        if not meds:
+            return
+        tm = time.localtime()
+        mins = tm.tm_hour * 60 + tm.tm_min
+        if self.med_done.get("day") != day:
+            self.med_done = {"day": day, "asked": {}}
+        for slot, _ in MED_SLOTS:
+            at = self.med_times[slot]
+            if not (at <= mins < at + 120) or not self.meds_due(slot, meds, taken):
+                continue
+            asked = self.med_done["asked"].get(slot, 0)
+            if asked >= 3 or (asked and now < self.med_snooze.get(slot, 0)):
+                continue                     # asked 3 times, or "Để sau" not over yet
+            self.med_done["asked"][slot] = asked + 1
+            self.config.set(med_done=self.med_done)
+            self.med_slot = slot
+            self.med_said = 1
+            self.last_med_voice = now
+            self.go("medicine")
+            self.voice.say("medicine", cut=True)
+            return
+
+    # ---------- trend ----------
+    def daily(self, key):
+        """The last 7 days: [(date struct, average or None)], oldest first. Mock values count only when the
+        latest result is mock too."""
+        mock = bool(self.result and self.result.get("mock"))
+        items = [it for it in self.history.recent(300) if it["t"] and (mock or not it["mock"])]
+        start = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)) - 6 * 86400
+        out = []
+        for i in range(7):
+            lo, hi = start + i * 86400, start + (i + 1) * 86400
+            vals = [it[key] for it in items if lo <= it["t"] < hi]
+            out.append((time.localtime(lo + 3600), (sum(vals) / float(len(vals))) if vals else None))
+        return out
+
     # ---------- reminders ----------
     def reminder_tick(self, now):
         if self.screen == "remind":
@@ -501,7 +667,7 @@ class App:
                 self.toast("Máy đã bị ngắt khỏi tài khoản", ATTN, 5)
                 self.go("pair")
                 self.voice.say("login")
-            elif ev == "saved":
+            elif ev in ("saved", "meds"):
                 self.dirty = True
         if not self.cloud.signed_in and self.screen not in ("pair", "place", "measure", "result", "emergency"):
             self.go("pair")                  # signing in is required
@@ -514,7 +680,9 @@ class App:
                 self.toast("Đã thấy cảm biến", SAFE)
         self.poll_sensor(now)
         self.measure_tick(now)
+        self.medicine_tick(now)
         self.reminder_tick(now)
+        self.rest_tick(now)
         if self.toast_text and now > self.toast_until:
             self.toast_text = ""
             self.dirty = True
@@ -523,6 +691,11 @@ class App:
             lt = self.board.light()
             hour = time.localtime().tm_hour
             self.voice.night = 0 <= lt < 300 and (hour >= 21 or hour < 6)
+            dark = 0 <= lt < 150 and (hour >= 21 or hour < 6)
+            if dark != self.dark_night:      # dimmer at night in a dark room
+                self.dark_night = dark
+                if not self.asleep:
+                    self.backlight.set(self.active_level())
         if self.net.ssid and self.voice.key:
             self.voice.start_making()
 
@@ -531,9 +704,13 @@ class App:
         now = time.monotonic()
         red = self.screen == "emergency"
         c = ui.Canvas(ui.RED_SOLID if red else None)
-        if not red:
-            title = REMIND_NAMES[self.edit_slot] if self.screen == "edit" else TITLES.get(self.screen)
-            c.top_bar(time.strftime("%H:%M") if clock_ok() else "", bool(self.net.ssid), title, BACK.get(self.screen))
+        if not red and self.screen != "clock":
+            title, back = TITLES.get(self.screen), BACK.get(self.screen)
+            if self.screen == "edit":
+                med = self.edit_kind == "med"
+                title = ("Thuốc buổi " + MED_SLOTS[self.edit_slot][1].lower()) if med else REMIND_NAMES[self.edit_slot]
+                back = "medsback" if med else "reminders"
+            c.top_bar(time.strftime("%H:%M") if clock_ok() else "", bool(self.net.ssid), title, back)
         getattr(self, "draw_" + self.screen)(c)
         if self.toast_text:
             c.toast(self.toast_text, self.toast_level, top=self.screen in ("emergency", "edit", "menu", "pair"),
@@ -726,7 +903,7 @@ class App:
             ok = state.startswith("Đã lưu")
             text = c.fit(state, ui.SMALL, W - 24)
             c.text_c(W / 2, 234, text, ui.GREEN if ok else ui.INK2, ui.SMALL)
-        c.button("L", "Đo lại", "start")
+        c.button("L", "Biểu đồ", "trend")
         c.button("R", "Xong", "idle", "main")
 
     def draw_emergency(self, c):
@@ -840,7 +1017,10 @@ class App:
         c.text_c(W / 2, 147, ":", ui.INK2, ui.NUM)
         c.text_c(W / 2, 226, "Giờ cách 1 · phút cách 15", ui.INK2, ui.SMALL)
         c.button("L", "Lưu", "save", "main")
-        c.button("R", "Tắt nhắc", "off")
+        if self.edit_kind == "med":
+            c.button("R", "Hủy", "medsback")
+        else:
+            c.button("R", "Tắt nhắc", "off")
 
     def draw_remind(self, c):
         import math
@@ -879,6 +1059,199 @@ class App:
         c.text_c(W / 2, 226, "Chạm thanh để chọn nhanh", ui.INK2, ui.SMALL)
         c.button("C", "Về", "menu", key="B")
 
+    # ---------- the clock (after a while without a touch) ----------
+    def next_medicine(self):
+        """(slot label, minutes) of today's next medicine time still to take, or None."""
+        if not clock_ok():
+            return None
+        meds, taken = self.cloud.meds_today(today())
+        tm = time.localtime()
+        mins = tm.tm_hour * 60 + tm.tm_min
+        for slot, label in MED_SLOTS:
+            if self.meds_due(slot, meds, taken) and self.med_times[slot] + 120 > mins:
+                return label, self.med_times[slot]
+        return None
+
+    def draw_clock(self, c):
+        if clock_ok():
+            tm = time.localtime()
+            big, date_text = time.strftime("%H:%M"), "%s, %d/%d" % (WEEKDAYS[tm.tm_wday], tm.tm_mday, tm.tm_mon)
+        else:
+            big, date_text = "--:--", "Chưa có giờ · cần Wi-Fi"
+        c.chip(W - 10, bool(self.net.ssid))
+        c.logo(12, 10, 22)
+        c.text_c(W / 2, 112, big, ui.INK, ("bold", 68))
+        c.text_c(W / 2, 140, date_text, ui.INK2, ui.BODY)
+        rows = []
+        meds, taken = self.cloud.meds_today(today()) if clock_ok() else (None, set())
+        nxt = self.next_medicine()
+        if nxt:
+            rows.append(("pill", "Thuốc buổi %s" % nxt[0].lower(), hhmm(nxt[1])))
+        elif meds:
+            rows.append(("pill", "Thuốc hôm nay", "Đã uống hết"))
+        if self.next_reminder():
+            rows.append(("clock", "Nhắc đo", self.next_reminder()))
+        last = self.history.recent(1)
+        if last:
+            rows.append(("heart", "%d · %d%%" % (last[0]["hr"], last[0]["spo2"]),
+                         ago(last[0]["t"]) if last[0]["t"] else ""))
+        if rows:
+            rh = 36
+            top = 164 + (3 - len(rows)) * rh // 2
+            c.card(10, top, W - 20, len(rows) * rh + 6, 16)
+            for i, (icon, label, value) in enumerate(rows):
+                y = top + 3 + i * rh
+                c.box(20, y + 5, 26, 26, 9, ui.hexc("#f4f8ff"), ui.hexc("#e5efff"), ui.hexc("#dceaff"), 1, None)
+                if icon == "heart":
+                    c.heart(33, y + 17, 5, ui.BLUE)
+                else:
+                    c.icon(icon, 33, y + 18, ui.BLUE, 0.65)
+                room = W - 24 - c.text_w(value, ui.SMALL) - 8 - 54
+                f = ui.BOLD if c.text_w(label, ui.BOLD) <= room else ui.SMALL
+                c.text(54, y + 24, c.fit(label, f, room), ui.INK, f)
+                c.text_r(W - 24, y + 24, value, ui.BLUE if value != "Đã uống hết" else ui.GREEN, ui.SMALL)
+                if i < len(rows) - 1:
+                    c.rect(20, y + rh, W - 40, 1, ui.LINE)
+        c.text_c(W / 2, 294, "Chạm để mở", ui.INK2, ui.SMALL)
+        c.tap(0, 0, W, H, ("A", "idle"))
+        c.tap(0, 0, W, H, ("B", "idle"))
+
+    # ---------- medicines ----------
+    def draw_medicine(self, c):             # "time for your medicine"
+        slot = self.med_slot
+        label = dict(MED_SLOTS).get(slot, "")
+        meds, taken = self.cloud.meds_today(today())
+        due = self.meds_due(slot, meds, taken)
+        c.box(10, 48, W - 20, 188, 18, ui.SURF, ui.hexc("#eef7ff"), ui.hexc("#c9e1ff"), 1, ui.SHADOW_CARD)
+        c.box(W / 2 - 22, 56, 44, 44, 22, ui.BLUE_TOP, ui.BLUE, None, 0, ui.SHADOW_BLUE)
+        c.icon("pill", W / 2, 78, ui.SURF, 1.0)
+        c.text_c(W / 2, 124, "Đến giờ uống thuốc", ui.INK, ui.TITLE)
+        c.text_c(W / 2, 142, "Buổi %s · %s" % (label.lower(), hhmm(self.med_times.get(slot, 0))), ui.INK2, ui.SMALL)
+        y = 164
+        shown = due[:2] if len(due) > 2 else due
+        for m in shown:
+            name = m["name"] + ((" " + m["strength"]) if m.get("strength") else "")
+            extra = ", ".join(x for x in (m.get("amount", ""), MEAL.get(m.get("meal"), "")) if x)
+            c.disc(26, y - 5, 3, ui.BLUE)
+            c.text(36, y, c.fit(name, ui.BOLD, W - 58), ui.INK, ui.BOLD)
+            if extra:
+                c.text(36, y + 17, c.fit(extra, ui.SMALL, W - 58), ui.INK2, ui.SMALL)
+            y += 36
+        if len(due) > len(shown):
+            c.text(36, y - 4, "và %d thuốc khác" % (len(due) - len(shown)), ui.BLUE, ui.SMALL)
+        c.button("L", "Đã uống", "taken:" + slot, "main")
+        c.button("R", "Để sau", "medlater")
+
+    def draw_meds(self, c):                 # Menu > Thuốc: today's medicines by time of day
+        meds, taken = self.cloud.meds_today(today()) if clock_ok() else (None, set())
+        rh = 40
+        c.card(10, 50, W - 20, 4 * rh + 6, 16)
+        for i, (slot, label) in enumerate(MED_SLOTS):
+            y = 53 + i * rh
+            rows = [m for m in (meds or []) if m.get(slot)]
+            left = self.meds_due(slot, meds, taken)
+            c.text(24, y + 26, label, ui.INK2, ui.BODY)
+            c.text(78, y + 27, hhmm(self.med_times[slot]), ui.INK, ui.BOLD)
+            if meds is None:
+                status, color = "", ui.INK2
+            elif not rows:
+                status, color = "Không có", ui.INK2
+            elif not left:
+                status, color = "Đã uống", ui.GREEN
+            else:
+                status, color = "%d thuốc" % len(left), ui.BLUE
+            f = ui.BOLD if left else ui.SMALL
+            c.text_r(W - 38, y + 26, status, color, f)
+            if status == "Đã uống":
+                cx = W - 38 - c.text_w(status, f) - 16
+                c.line(cx, y + 20, cx + 4, y + 24, 2, ui.GREEN)
+                c.line(cx + 4, y + 24, cx + 11, y + 16, 2, ui.GREEN)
+            c.icon("next", W - 24, y + rh / 2.0, ui.INK2, 0.8)
+            if i < 3:
+                c.rect(22, y + rh, W - 44, 1, ui.LINE)
+            c.tap(10, y, W - 20, rh, "medslot:%d" % i)
+        if not clock_ok():
+            note = "Cần Wi-Fi để máy biết giờ"
+        elif meds is None:
+            note = "Đang tải lịch thuốc..." if not self.cloud.meds_problem else "Chưa tải được lịch thuốc"
+        elif not meds:
+            note = "Thêm thuốc trong ứng dụng GeneSense"
+        else:
+            note = "Chạm một buổi để đổi giờ"
+        c.text_c(W / 2, 230, note, ui.INK2, ui.SMALL)
+        due = self.due_slot()
+        if due:
+            c.button("L", "Đã uống", "taken:" + due, "main")
+            c.button("R", "Về", "menu")
+        else:
+            c.button("C", "Về", "menu", key="B")
+
+    # ---------- the 7-day trend after a result ----------
+    def trend_card(self, c, y, key, label, unit, band, floor, ceil, level, near):
+        days = self.daily(key)
+        today_val = days[-1][1]
+        if self.result:
+            today_val = self.result[key]     # the reading just taken, not the day's average
+        before = [v for _, v in days[:-1] if v is not None]
+        avg = sum(before) / len(before) if before else None
+        h = 92
+        c.card(10, y, W - 20, h, 16)
+        c.text(22, y + 21, label, ui.INK, ui.BOLD)
+        if avg is None:
+            note, ncol = "Chưa có ngày trước để so", ui.INK2
+        else:
+            diff = today_val - avg
+            if abs(diff) < near:
+                note, ncol = "Như thường lệ", ui.GREEN
+            else:
+                note = "%s %d%s" % ("Cao hơn" if diff > 0 else "Thấp hơn", abs(round(diff)), unit)
+                ncol = ui.AMBER if level(today_val) != SAFE or abs(diff) >= near * 2 else ui.INK2
+        c.text_r(W - 22, y + 21, c.fit(note, ui.SMALL, W - 44 - c.text_w(label, ui.BOLD) - 8), ncol, ui.SMALL)
+        x0, x1, y0, y1 = 46, W - 30, y + 30, y + 66
+        vals = [v for _, v in days if v is not None] + [today_val]
+        lo, hi = min([band[0]] + [v - 4 for v in vals]), max([band[1]] + [v + 4 for v in vals])
+        lo, hi = max(floor, lo), min(ceil, hi)
+
+        def py(v):
+            return y1 - (min(hi, max(lo, v)) - lo) / float(hi - lo) * (y1 - y0)
+
+        def px(i):
+            return x0 + i * (x1 - x0) / 6.0
+        b0, b1 = py(band[1]), py(band[0])
+        c.rr(x0 - 8, b0, x1 - x0 + 16, max(4, b1 - b0), 6, ui.GREEN_BG)   # the safe range, like the app
+        if avg is not None:                  # the week's average: a dashed line
+            ay = py(avg)
+            xx = x0 - 8
+            while xx < x1 + 8:
+                c.line(xx, ay, min(xx + 4, x1 + 8), ay, 1.2, ui.PULSE)
+                xx += 8
+            c.text(18, ay + 4, "TB", ui.INK2, ("semibold", 11))
+        pts = [(px(i), py(v)) for i, (_, v) in enumerate(days[:-1]) if v is not None] + [(px(6), py(today_val))]
+        for (ax, ay2), (bx, by) in zip(pts, pts[1:]):
+            c.line(ax, ay2, bx, by, 2.2, ui.CHART)
+        for (ax, ay2) in pts[:-1]:
+            c.disc(ax, ay2, 4.2, ui.SURF)
+            c.disc(ax, ay2, 3, ui.CHART)
+        lv = level(today_val)
+        tx, ty = px(6), py(today_val)
+        c.mark(tx - 8, ty - 8, lv, 16, ui.SURF)
+        c.mark(tx - 6.5, ty - 6.5, lv, 13)
+        tag = "%d%s" % (round(today_val), unit)
+        tw = c.text_w(tag, ("bold", 14)) + 10
+        tagx, tagy = tx - 12 - tw, min(max(ty - 9, y + 26), y + 66)      # left of today's dot
+        c.box(tagx, tagy, tw, 18, 9, ui.LEVEL_BG[lv], ui.LEVEL_BG[lv], None, 0, None)
+        c.text(tagx + 5, tagy + 14, tag, ui.LEVEL_COLOR[lv], ("bold", 14))
+        for i, (tm, v) in enumerate(days):
+            name = "Nay" if i == 6 else SHORT_DAYS[tm.tm_wday]
+            f = ("semibold", 12) if i == 6 else ("medium", 12)
+            c.text_c(px(i), y + 84, name, ui.BLUE if i == 6 else (ui.INK2 if v is not None else ui.LINE2), f)
+
+    def draw_trend(self, c):
+        self.trend_card(c, 48, "hr", "Nhịp tim", "", (50, 110), 30, 190, level_hr, 6)
+        self.trend_card(c, 146, "spo2", "Oxy máu", "%", (95, 100), 80, 100, level_spo2, 1.5)
+        c.button("L", "Đo lại", "start")
+        c.button("R", "Xong", "idle", "main")
+
     def draw_info(self, c):
         rows = []
         sd = sd_folder()
@@ -908,7 +1281,9 @@ class App:
         for i, (label, value, warn) in enumerate(rows):
             c.row(y, rh, label, value or "—", i == len(rows) - 1, warn)
             y += rh
-        c.button("C", "Về", "menu", key="B")
+        confirm = time.monotonic() < self.clear_confirm_until
+        c.button("L", "Chạm lại" if confirm else "Xóa hết", "clear")
+        c.button("R", "Về", "menu")
 
     _qr_cache = (None, None)
 
@@ -956,13 +1331,13 @@ class App:
         c.button("C", "Mã mới", "newcode")
 
 
-TITLES = {"menu": "Menu", "brightness": "Độ sáng", "history": "Lịch sử đo", "reminders": "Nhắc đo", "info": "Thông tin", "result": "Kết quả đo"}
-BACK = {"menu": "idle", "brightness": "menu", "history": "menu", "reminders": "menu", "edit": "reminders", "info": "menu", "result": "idle"}
-DEPTH = {"pair": 0, "idle": 0, "remind": 1, "place": 1, "measure": 1, "menu": 1, "result": 2, "emergency": 2,
+TITLES = {"meds": "Thuốc", "trend": "Xu hướng", "menu": "Menu", "brightness": "Độ sáng", "history": "Lịch sử đo", "reminders": "Nhắc đo", "info": "Thông tin", "result": "Kết quả đo"}
+BACK = {"meds": "menu", "trend": "result", "menu": "idle", "brightness": "menu", "history": "menu", "reminders": "menu", "edit": "reminders", "info": "menu", "result": "idle"}
+DEPTH = {"clock": 0, "medicine": 1, "meds": 2, "trend": 3, "pair": 0, "idle": 0, "remind": 1, "place": 1, "measure": 1, "menu": 1, "result": 2, "emergency": 2,
          "history": 2, "reminders": 2, "info": 2, "brightness": 2, "edit": 3}
 FRAME_EVERY = {"measure": 0.1, "place": 0.1, "pair": 0.1, "idle": 0.12, "remind": 0.12, "emergency": 0.25}
-MENU_ICONS = ["chart", "clock", "sun", "info", "logout", "trash"]
-MENU_SHORT = ["Lịch sử", "Nhắc đo", "Độ sáng", "Thông tin", "Đăng xuất", "Xóa lịch sử"]
+MENU_ICONS = ["chart", "clock", "pill", "sun", "info", "logout"]
+MENU_SHORT = ["Lịch sử", "Nhắc đo", "Thuốc", "Độ sáng", "Thông tin", "Đăng xuất"]
 
 
 def run_tk(app):

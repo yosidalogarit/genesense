@@ -342,6 +342,10 @@ class Canvas:
                        (cx - 5 * s, cy + 3 * s), (cx - 9 * s, cy + 3 * s)], color)
             self.arc(cx + 1 * s, cy, 5 * s, -50, 50, t, color)
             self.arc(cx + 1 * s, cy, 9.5 * s, -50, 50, t, color)
+        elif name == "pill":                 # a capsule
+            ln(cx - 5.5 * s, cy + 5.5 * s, cx + 5.5 * s, cy - 5.5 * s, 9 * s, color)
+            ln(cx - 5.5 * s, cy + 5.5 * s, cx + 5.5 * s, cy - 5.5 * s, 5.4 * s, SURF if color != SURF else BLUE)
+            ln(cx - 5.5 * s, cy + 5.5 * s, cx, cy, 5.4 * s, color)
         elif name == "sun":
             self.disc(cx, cy, 4.5 * s, color)
             for k in range(8):

@@ -180,7 +180,8 @@ class Backlight:
         except (OSError, ValueError):
             return None
 
-    def set(self, percent):                  # True = accepted; the command runs in the background
+    def set(self, percent, urgent=False):    # True = accepted; the command runs in the background.
+        # urgent (waking the screen): no waiting for taps to settle
         if not self.ok:
             return False
         percent = max(5, min(100, int(percent)))
@@ -194,7 +195,7 @@ class Backlight:
                 return False
         with self._lock:                     # quick taps: only the last level is sent, once they stop
             self._want = percent
-            self._asked = time.time()
+            self._asked = time.time() - (self.SETTLE if urgent else 0)
             if self._busy:
                 return True
             self._busy = True

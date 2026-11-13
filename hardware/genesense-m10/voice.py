@@ -31,12 +31,13 @@ CLIPS = {
     "nofinger": "Chưa đọc được ngón tay. Hãy đeo lại cảm biến cho vừa khít.",
     "unstable": "Số đo chưa ổn định. Hãy ngồi yên, thả lỏng tay, rồi đo lại.",
     "remind": "Đã đến giờ đo. Chạm vào màn hình để bắt đầu đo.",
+    "medicine": "Đến giờ uống thuốc. Uống xong, hãy chạm nút Đã uống.",
     "login": "Hãy đăng nhập. Dùng điện thoại có ứng dụng GeneSense để quét mã trên màn hình.",
 }
 # buzzer tunes while there is no voice: (frequency, ms) pairs
 TUNES = {"beep": [(880, 140)], "ok": [(660, 120), (990, 200)], "err": [(520, 150), (390, 250)], "tick": [(1400, 40)],
          "alarm": [(1050, 260), (760, 260)] * 3}
-FALLBACK = {"emergency": "alarm", "done": "ok", "hold": "err", "check": "err", "nofinger": "err", "unstable": "err"}
+FALLBACK = {"medicine": "ok", "emergency": "alarm", "done": "ok", "hold": "err", "check": "err", "nofinger": "err", "unstable": "err"}
 
 
 def clip_path(name):

@@ -11,6 +11,21 @@ It is a test device, not a medical device; every screen says so.
 - **Sign-in is required** on first start. It shows a QR code and the code `ABCD 2345`; the phone app approves it. Every real reading then goes to that person's GeneSense profile. Readings taken before sign-in, mock readings and readings without a clock stay on the device. The server API is the same as the K10's (`backend/app/devices.py`).
 - History charts (last 14), reminders to measure (3 times a day, set by touch), and a CSV log on the microSD card (`GeneSense/measurements.csv`, else in `data/`).
 - **Độ sáng** (menu): screen brightness 10–100 % with −/+ or a touch on the bar, set with the M10's own **`brightness 0-100` command** (UNIHIKER FAQ; the M10 has no `/sys/class/backlight`, which the first version used, so it did nothing). The command runs in a background thread. Changing it fast **froze the whole M10** (11 November 2026), probably because the command and the program's pinpong polling used the co-processor link at the same time. Now the level is applied only 0.7 s after the last tap and at most every 1.5 s, and the command holds `Board.io`. That lock now guards **every** pinpong call (buttons, motion, light, buzzer, SEN0518), which pinpong needs anyway: the voice thread's buzzer and the screen loop used to talk to it at the same time, a likely cause of the old "Thử loa" crash too. The M10 resets brightness at restart, so the program sets the saved level from `data/config.json` at start.
+- **Medicine reminders** (13 November 2026). The device reads today's medicines from the app's "Thuốc" list.
+  - **API:** `GET /api/devices/medications?day=` with the device token (backend/app/main.py). The list is fetched every 10 minutes and cached in the config, so it also works without Wi-Fi.
+  - **Times:** the app only stores Sáng/Trưa/Chiều/Tối, so the clock times live on the device (`MED_TIMES`, default 07:00 / 11:30 / 17:00 / 20:00). Change them in Menu → Thuốc by tapping a row.
+  - **The reminder:** within 2 hours of a time, if a medicine is not ticked, the "Đến giờ uống thuốc" screen shows the medicines with their dose and "trước/sau ăn", plus a voice clip. It asks at most 3 times; "Để sau" waits 10 minutes.
+  - **Ticking:** "Đã uống" ticks them in the app (`PUT /api/devices/medications/{id}/intakes/{slot}`). Ticks are queued (`intake_queue`) and retried until the server answers.
+- **Clock and screen sleep.** After `CLOCK_AFTER` (45 s) without a touch, a resting screen becomes a big clock. It shows the date, the next medicine, the next measuring reminder and the last reading.
+  - After `SLEEP_AFTER` (120 s) the backlight drops to `SLEEP_LEVEL` (10 %). The first touch or button press only wakes the screen.
+  - Reminders, medicines and emergencies wake it themselves.
+  - At night in a dark room the screen is at most `NIGHT_LEVEL` (40 %) bright.
+  - Measuring, editing and sign-in screens never sleep.
+- **Trend chart.** "Biểu đồ" on the result screen opens "Xu hướng": one card each for heart rate and SpO₂ over the last 7 days.
+  - Each card shows the daily averages as a line on the app's green safe band, with a dashed line for the average of the earlier days ("TB").
+  - Today's reading is drawn in the app's level shape and colour with its value, and the day names run underneath.
+  - A plain phrase in the corner says "Như thường lệ", "Cao hơn 6" or "Thấp hơn 2%".
+- **Menu changes:** the tiles are now Lịch sử, Nhắc đo, Thuốc, Độ sáng, Thông tin, Đăng xuất. "Xóa hết" (clear history) moved to the Thông tin screen.
 - **Voice:** Vietnamese clips made once by Gemini TTS (needs a Gemini key and Wi-Fi), played on a **USB** sound device. Without one, the buzzer plays short tunes. The voice is quieter in a dark room at night.
 - Touch everywhere. Bottom buttons are 46 px tall and 12 px apart, and sub-screens have a back arrow in the header. Buttons **A/B** on the side do the same as the two bottom buttons. The menu is 6 tiles: B moves through them (and "Về"), A opens. Screens slide in (forwards from the right, back from the left), a pressed button darkens briefly, and messages slide in.
 - Redesigned 11 November 2026 at the owner's request ("buttons too small and too close", match the web and app design).
