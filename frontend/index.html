@@ -111,7 +111,7 @@
       <div class="nav-drawer-heading"><div class="nav-drawer-brand"><img src="/assets/genesense.png" width="36" height="36" alt=""><span><strong>GeneSense</strong><small>Theo dõi sức khỏe và sàng lọc bệnh mạn tính</small></span></div><button class="icon-button nav-close" id="nav-close" type="button" aria-label="Đóng bảng điều hướng"><span data-icon="close"></span></button></div>
       <nav class="nav-drawer-links" aria-label="Các mục chính">
         <button data-nav="dashboard" class="active"><span class="nav-item-icon" data-icon="grid"></span><span class="nav-item-label">Hôm nay</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
-        <button data-nav="history"><span class="nav-item-icon" data-icon="chart"></span><span class="nav-item-label">Lịch sử đo</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
+        <button data-nav="history"><span class="nav-item-icon" data-icon="chart"></span><span class="nav-item-label">Lịch sử</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="genetics"><span class="nav-item-icon" data-icon="family"></span><span class="nav-item-label">Di truyền</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="assistant" class="own-only"><span class="nav-item-icon" data-icon="heart"></span><span class="nav-item-label">Trợ lý AI</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
         <button data-nav="records" class="own-only"><span class="nav-item-icon" data-icon="pill"></span><span class="nav-item-label">Thuốc</span><span class="nav-item-arrow" data-icon="chevron"></span></button>
@@ -177,8 +177,9 @@
       </section>
 
       <section id="history-view" class="view hidden">
-        <div class="page-heading"><div><h1>Lịch sử đo</h1><p class="lead">Theo dõi những thay đổi qua từng lần đo.</p></div><div class="heading-actions"><button class="btn outline" id="open-report"><span data-icon="report"></span>Lập phiếu<span class="wide-only">tổng hợp</span></button></div></div>
-        <div class="measurement-tabs history-tabs" role="group" aria-label="Cách xem chỉ số"><button class="active" data-history-tab="charts" aria-pressed="true"><span data-icon="chart"></span>Biểu đồ</button><button data-history-tab="readings" aria-pressed="false"><span data-icon="history"></span>Các lần đo</button></div>
+        <div class="page-heading"><div><h1>Lịch sử</h1><p class="lead">Chỉ số và giấy khám đã lưu.</p></div><div class="heading-actions"><button class="btn outline" id="open-report"><span data-icon="report"></span>Lập phiếu<span class="wide-only">tổng hợp</span></button></div></div>
+        <div class="measurement-tabs history-tabs" role="group" aria-label="Nội dung lịch sử" data-active="charts"><button class="active" data-history-tab="charts" aria-pressed="true"><span data-icon="chart"></span>Biểu đồ</button><button data-history-tab="readings" aria-pressed="false"><span data-icon="history"></span>Lần đo</button><button class="own-only" data-history-tab="documents" aria-pressed="false"><span data-icon="document"></span>Giấy khám</button></div>
+        <div id="history-reading-content">
         <section id="pending-readings" class="panel pending-readings hidden" aria-labelledby="pending-readings-title"></section>
         <article id="history-readings-panel" class="panel hidden"><div class="panel-heading"><h2 class="visually-hidden">Các lần đo</h2><label class="inline-select">Hiển thị<select id="history-filter"><option value="all">Tất cả</option><option value="real">Dữ liệu của tôi</option><option value="simulation">Dữ liệu mẫu</option></select></label></div><div id="history-list"></div></article>
         <section id="history-charts-panel" class="section" aria-labelledby="trend-title">
@@ -200,6 +201,13 @@
           <p id="tip-more" class="note"></p>
           <p id="follow-up" class="follow-up hidden"></p>
         </section>
+        </div>
+        <section id="history-documents-panel" class="section own-only hidden" aria-labelledby="history-documents-title">
+          <div class="section-heading"><h2 id="history-documents-title">Giấy khám đã lưu</h2><button class="btn primary" data-open-upload><span data-icon="scan"></span>Thêm giấy khám</button></div>
+          <p class="note">Nội dung đã lưu được dùng khi bạn phân tích với trợ lý AI. Ảnh gốc chỉ có trên thiết bị đã lưu ảnh.</p>
+          <div id="history-medical-record-list" class="medical-record-list" data-medical-record-list></div>
+          <button class="link-button" data-nav="assistant">Phân tích cùng trợ lý AI <span data-icon="chevron"></span></button>
+        </section>
       </section>
 
       <section id="genetics-view" class="view hidden">
@@ -209,11 +217,12 @@
       </section>
 
       <section id="assistant-view" class="view hidden">
-        <div class="page-heading"><div><h1>Trợ lý AI</h1><p class="lead">Tổng hợp hồ sơ, chỉ số, thuốc và tiền sử gia đình để bạn hiểu điều cần trao đổi với bác sĩ.</p></div></div>
+        <div class="page-heading"><div><h1>Trợ lý AI</h1><p class="lead">Tổng hợp hồ sơ, chỉ số, giấy khám, thuốc và tiền sử gia đình.</p></div></div>
         <div class="assistant-layout">
           <form id="assistant-form" class="panel assistant-form">
             <div class="section-heading"><h2>Dữ liệu sẽ dùng</h2></div>
             <div id="assistant-sources" class="assistant-sources"></div>
+            <p class="note">Dùng tối đa 5 giấy khám lưu gần nhất trong Lịch sử.</p>
             <p class="note">Dữ liệu tự nhập và nội dung đọc từ ảnh có thể sai. Ghi chú, giấy tờ có thể chứa thông tin cá nhân; hãy kiểm tra trước khi gửi.</p>
             <label>Muốn xem kỹ phần nào?<select id="assistant-focus"><option value="overview">Toàn bộ hồ sơ</option><option value="family">Tiền sử gia đình</option><option value="readings">Các chỉ số</option><option value="documents">Giấy tờ</option><option value="medications">Thuốc đang dùng</option></select></label>
             <label><span class="assistant-label-line">Câu hỏi của bạn <small>(không bắt buộc)</small></span><textarea id="assistant-question" rows="3" maxlength="500" placeholder="Ví dụ: Tôi nên hỏi bác sĩ điều gì về tiền sử gia đình?"></textarea></label>
@@ -242,7 +251,7 @@
         <div id="documents-panel" class="records-panel">
           <div class="section-heading"><h2 class="visually-hidden">Giấy tờ đã lưu</h2><div class="heading-actions"><button class="btn primary" id="upload-record"><span data-icon="plus"></span>Thêm giấy tờ</button></div></div>
           <p id="records-ai-off" class="note hidden">Phân tích AI hiện chưa khả dụng. Bạn vẫn có thể chụp hoặc chọn ảnh để xem trước; ảnh sẽ không được gửi đi.</p>
-          <div id="medical-record-list" class="medical-record-list"></div>
+          <div id="medical-record-list" class="medical-record-list" data-medical-record-list></div>
         </div>
       </section>
 

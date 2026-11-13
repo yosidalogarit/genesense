@@ -234,15 +234,22 @@ async def clinical_review(
             for row in readings
         ],
         "documents": [
-            {"saved_at": row.created_at.isoformat(),
+            {"reference": f"Giấy tờ {index}",
+             "saved_at": row.created_at.isoformat(),
              "document_type": row.analysis.get("document_type"),
              "document_date": row.analysis.get("document_date"),
              "summary": str(row.analysis.get("summary") or "")[:700],
              "metrics": (row.analysis.get("metrics") or [])[:20],
              "conditions": (row.analysis.get("conditions") or [])[:15],
+             "vitals": row.analysis.get("vitals") or {},
+             "own_conditions": (row.analysis.get("own_conditions") or [])[:7],
+             "family_conditions": (row.analysis.get("family_conditions") or [])[:49],
+             "medications": (row.analysis.get("medications") or [])[:30],
+             "recommendations": (row.analysis.get("recommendations") or [])[:20],
+             "confidence": row.analysis.get("confidence"),
              "warnings": (row.analysis.get("warnings") or [])[:10],
              "verification": "AI đọc từ ảnh; người dùng cần đối chiếu bản gốc"}
-            for row in documents
+            for index, row in enumerate(documents, start=1)
         ],
         "medications": [
             {"name": row.name, "strength": row.strength, "amount": row.amount,

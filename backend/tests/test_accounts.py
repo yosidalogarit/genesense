@@ -153,6 +153,69 @@ def test_clinical_review_requires_consent_and_stays_account_scoped(client, monke
     assert client.delete("/api/clinical-reviews/" + remaining_id).status_code == 404
 
 
+def test_clinical_review_uses_recent_saved_documents_and_respects_deletion_and_account(client, monkeypatch):
+    from types import SimpleNamespace
+    from backend.app.schemas import ClinicalReviewResult
+
+    async def use_real_account(user_id):
+        async with client.db_factory() as session:
+            await session.execute(update(User).where(User.id == user_id).values(is_demo=False))
+            await session.commit()
+
+    first = login(client)
+    client.put("/api/profile", json=PROFILE)
+    asyncio.run(use_real_account(first["id"]))
+    analysis = MedicalDocumentAnalysis(
+        document_type="lab_result", document_date="2026-09-20",
+        title="Giấy khám giả định", summary="Dữ liệu kiểm thử tài khoản thứ nhất.",
+        vitals={"systolic": 146, "diastolic": 94}, own_conditions=["hypertension"],
+        family_conditions=[{"member": "father", "condition": "diabetes"}],
+        medications=[{"name": "Thuốc giả định", "dose": "1 viên", "frequency": "mỗi sáng"}],
+        confidence="medium", disclaimer="Dữ liệu giả định, cần đối chiếu bản gốc.",
+    ).model_dump(mode="json")
+    # Six papers exercise the five-document bound without losing structured content.
+    saved = []
+    for index in range(6):
+        response = client.post("/api/medical-records", json={
+            "analysis": {**analysis, "summary": f"Giấy kiểm thử {index}"},
+            "document_hash": f"{index:064x}", "health_consent": True,
+        })
+        assert response.status_code == 201, response.text
+        saved.append(response.json())
+
+    received = []
+
+    async def review(context):
+        received.append(context)
+        return ClinicalReviewResult(summary="Đã dùng giấy khám giả định.", findings=[], missing_data=[])
+
+    monkeypatch.setattr(main, "ai_service", SimpleNamespace(available=True, review_clinical_context=review))
+    response = client.post("/api/clinical-review", json={"consent": True})
+    assert response.status_code == 200, response.text
+    papers = received[-1]["documents"]
+    assert len(papers) == 5
+    assert papers[0]["summary"] == "Giấy kiểm thử 5"
+    assert all(paper["summary"] != "Giấy kiểm thử 0" for paper in papers)
+    assert papers[0]["reference"] == "Giấy tờ 1"
+    assert papers[0]["vitals"]["systolic"] == 146
+    assert papers[0]["own_conditions"] == ["hypertension"]
+    assert papers[0]["family_conditions"] == [{"member": "father", "condition": "diabetes"}]
+    assert papers[0]["medications"][0]["name"] == "Thuốc giả định"
+    assert any(source["label"] == "Giấy tờ" and source["count"] == 5 for source in response.json()["sources"])
+
+    assert client.delete("/api/medical-records/" + saved[-1]["id"]).status_code == 204
+    assert client.post("/api/clinical-review", json={"consent": True}).status_code == 200
+    assert len(received[-1]["documents"]) == 5
+    assert all(paper["summary"] != "Giấy kiểm thử 5" for paper in received[-1]["documents"])
+
+    client.post("/api/auth/logout")
+    second = login(client)
+    client.put("/api/profile", json=PROFILE)
+    asyncio.run(use_real_account(second["id"]))
+    assert client.post("/api/clinical-review", json={"consent": True}).status_code == 200
+    assert received[-1]["documents"] == []
+
+
 def test_clinical_review_reports_missing_ai_configuration(client, monkeypatch):
     from types import SimpleNamespace
 

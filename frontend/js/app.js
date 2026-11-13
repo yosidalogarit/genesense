@@ -81,7 +81,7 @@ const isReal = record => (record.vitals?.source || "manual") !== "simulation";
 const DOCUMENT_TYPES = { lab_result: "Kết quả xét nghiệm", prescription: "Đơn thuốc", discharge_note: "Giấy ra viện", imaging_report: "Kết quả chẩn đoán hình ảnh", vaccination: "Tiêm chủng", other: "Tài liệu sức khỏe" };
 const FLAG_NAMES = { normal: "Trong khoảng tham chiếu", high: "Cao", low: "Thấp", abnormal: "Cần xem lại", unknown: "Chưa rõ" };
 const state = { viewing: null, viewingMedications: null, own: null, care: { patients: [], caregivers: [] }, user: null, health: null, records: [], result: null, risk: null, weeklyBP: null, step: 0, editing: false, rating: 0,
-  medicalRecords: [], medications: [], medicationIntakes: null, pendingAssessments: [], recordsTab: null, editingMedicine: null, pendingMedical: null, documentAiEnabled: false, aiProvider: "AI", assistantHistory: [], assistantBusy: false, previewUrl: null, uploadFile: null,
+  medicalRecords: [], medications: [], medicationIntakes: null, pendingAssessments: [], historyTab: "charts", recordsTab: null, editingMedicine: null, pendingMedical: null, documentAiEnabled: false, aiProvider: "AI", assistantHistory: [], assistantBusy: false, previewUrl: null, uploadFile: null,
   deviceSource: null, deviceValues: {}, deviceTimes: {}, samples: [], deviceEpoch: 0, authEpoch: 0, busy: false, view: "dashboard" };
 let ble = null;
 let simulator = null;
@@ -368,14 +368,14 @@ function navigate(view) {
     if (button.dataset.nav === state.view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  const pageName = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Di truyền", assistant: "Trợ lý AI", profile: "Hồ sơ" }[state.view];
+  const pageName = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử", genetics: "Di truyền", assistant: "Trợ lý AI", profile: "Hồ sơ" }[state.view];
   document.title = pageName + " - GeneSense";
   window.history.replaceState(null, "", "#" + state.view);
   if (state.view === "profile") renderProfile();
   if (state.view === "genetics") renderGenetics();
   if (state.view === "assistant") { renderAssistantSources(); void refreshAssistantHistory(); }
   if (state.view === "records") { renderMedicalRecords(); renderRecordsTab(); }
-  if (state.view === "history") { renderHistory(); renderTips(); renderTrends(); if (!state.viewing) void refreshRecords(); }
+  if (state.view === "history") { renderHistory(); renderTips(); showHistoryTab(state.historyTab || "charts"); if (!state.viewing) { void refreshRecords(); void refreshMedicalRecords(); } }
   window.scrollTo(0, 0);
 }
 
@@ -622,15 +622,23 @@ function renderDashboard() {
   renderMedicineLink();
 }
 function showHistoryTab(tab) {
+  tab = ["charts", "readings", "documents"].includes(tab) ? tab : "charts";
+  if (state.viewing && tab === "documents") tab = "charts";
+  state.historyTab = tab;
   const charts = tab === "charts";
+  const documents = tab === "documents";
+  $(".history-tabs").dataset.active = tab;
+  $("#history-reading-content").classList.toggle("hidden", documents);
+  $("#history-documents-panel").classList.toggle("hidden", !documents);
   $("#history-charts-panel").classList.toggle("hidden", !charts);
-  $("#history-readings-panel").classList.toggle("hidden", charts);
+  $("#history-readings-panel").classList.toggle("hidden", tab !== "readings");
   $$("[data-history-tab]").forEach(button => {
     const active = button.dataset.historyTab === tab;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
   if (charts) renderTrends();
+  if (documents) renderMedicalRecords();
 }
 // Charts show what the readings table shows: whole numbers, except SpO₂ which keeps one decimal.
 const chartValue = (key, value) => key === "spo2" ? value : Math.round(value);
@@ -1142,15 +1150,17 @@ function analysisMarkup(analysis) {
 }
 
 function renderMedicalRecords() {
+  const lists = $$("[data-medical-record-list]");
   if (!state.medicalRecords.length) {
-    $("#medical-record-list").innerHTML = '<article class="panel empty-state"><h2>Chưa có giấy tờ nào</h2><p class="note">Giấy tờ đã lưu sẽ hiện ở đây.</p></article>';
+    lists.forEach(list => { list.innerHTML = '<article class="panel empty-state"><h2>Chưa có giấy tờ nào</h2><p class="note">Chụp giấy khám từ Hôm nay hoặc chọn Thêm giấy khám để bắt đầu.</p></article>'; });
     return;
   }
-  $("#medical-record-list").innerHTML = state.medicalRecords.map(record => {
+  const markup = state.medicalRecords.map(record => {
     const a = record.analysis;
     const notable = (a.metrics || []).filter(metric => !["normal", "unknown"].includes(metric.flag)).length;
     return '<article class="panel medical-record"><div class="record-meta"><span>' + esc(DOCUMENT_TYPES[a.document_type] || "Tài liệu sức khỏe") + "</span><span>" + esc(a.document_date ? date(a.document_date, false) : date(record.created_at, false)) + "</span>" + (notable ? '<span class="tag attention">' + notable + " mục cần xem lại</span>" : "") + "</div><h2>" + esc(a.title) + "</h2><p>" + esc(a.summary) + '</p><details class="record-details"><summary>Xem nội dung đã lưu</summary>' + analysisMarkup(a) + '</details><div class="record-actions"><button class="link-button hidden" data-view-scan="' + esc(record.id) + '">Xem ảnh gốc</button><button class="delete-record" data-delete-record="' + esc(record.id) + '">Xóa</button></div></article>';
   }).join("");
+  lists.forEach(list => { list.innerHTML = markup; });
   // The button appears only where this device still holds the scan.
   $$("[data-view-scan]").forEach(async button => { if (await scanRequest("readonly", store => store.getKey(button.dataset.viewScan))) button.classList.remove("hidden"); });
 }
@@ -1214,7 +1224,7 @@ function applyMarkup(analysis) {
   if (!found.length && !own.length && !family.length && !medicines.length) return '<p class="note">Không thấy chỉ số huyết áp, nhịp tim, đường huyết, thuốc, bệnh đã chẩn đoán hay tiền sử gia đình mới để đưa vào hồ sơ. Nội dung giấy tờ vẫn được lưu.</p>';
   const check = (attribute, label) => '<label class="check-label"><input type="checkbox" ' + attribute + ' checked><span>' + label + "</span></label>";
   return '<h3>Chọn mục đồng bộ</h3>' +
-    (found.length ? '<fieldset class="apply-group"><legend>Chỉ số đo</legend>' + check('id="apply-vitals"', "Thêm vào Lịch sử đo với nguồn “Từ giấy tờ”<small>Số liệu cũ, không đổi tình trạng Hôm nay.</small>") +
+    (found.length ? '<fieldset class="apply-group"><legend>Chỉ số đo</legend>' + check('id="apply-vitals"', "Thêm vào Lịch sử với nguồn “Từ giấy tờ”<small>Số liệu cũ, không đổi tình trạng Hôm nay.</small>") +
       '<div class="field-grid">' + found.map(([key, label, min, max]) => "<label>" + label + '<input type="number" inputmode="decimal" step=".1" min="' + min + '" max="' + max + '" data-apply-vital="' + key + '" value="' + esc(vitals[key] == null ? "" : Math.round(vitals[key] * 10) / 10) + '"></label>').join("") +
       '<label>Ngày ghi trên giấy tờ<input type="date" id="apply-date" required min="1950-01-01" max="' + new Date().toLocaleDateString("sv") + '" value="' + esc(analysis.document_date || "") + '"></label></div></fieldset>' : "") +
     (own.length ? '<fieldset class="apply-group"><legend>Bệnh sử · Hồ sơ</legend>' + own.map(key => check('data-apply-own="' + esc(key) + '"', esc(name(key)))).join("") + "</fieldset>" : "") +
@@ -1457,9 +1467,10 @@ async function refreshMedicalRecords() {
     if (epoch !== state.authEpoch) return;
     state.medicalRecords = records;
     renderMedicalRecords();
+    renderAssistantSources();
   } catch (error) {
     if (epoch !== state.authEpoch) return;
-    $("#medical-record-list").innerHTML = '<article class="panel empty-state"><h2>Chưa tải được danh sách giấy tờ</h2><p>' + esc(error.message) + "</p></article>";
+    $$("[data-medical-record-list]").forEach(list => { list.innerHTML = '<article class="panel empty-state"><h2>Chưa tải được danh sách giấy tờ</h2><p>' + esc(error.message) + "</p></article>"; });
   }
 }
 
@@ -1489,10 +1500,9 @@ function updateDocumentButton() {
   $("#analyze-document").disabled = !state.documentAiEnabled || !state.uploadFile || !$("#document-ai-consent").checked || state.busy;
 }
 
-function openMedicalUpload({ fromDashboard = false } = {}) {
+function openMedicalUpload() {
   if (state.viewing) return;
   resetMedicalUpload();
-  state.documentUploadFromDashboard = fromDashboard;
   openDialog($("#medical-upload-dialog"));
 }
 
@@ -1589,7 +1599,8 @@ async function saveMedicalRecord() {
     await applyDocument(vitals);
     closeDialog($("#medical-upload-dialog"));
     personalize();
-    navigate(state.documentUploadFromDashboard ? "dashboard" : "records");
+    navigate("history");
+    showHistoryTab("documents");
     toast("Đã lưu giấy tờ và cập nhật các mục đã chọn.");
   } catch (error) { errorAt("#record-save-error", (state.pendingMedical?.savedRecordId ? "Giấy tờ đã lưu. Chưa đồng bộ xong: " : "") + error.message); }
   finally { state.busy = false; button.innerHTML = original; button.disabled = !$("#confirm-medical-record").checked; }
@@ -1602,6 +1613,7 @@ async function deleteMedicalRecord(id) {
     await scanRequest("readwrite", store => store.delete(id));
     state.medicalRecords = state.medicalRecords.filter(record => record.id !== id);
     renderMedicalRecords();
+    renderAssistantSources();
     toast("Đã xóa giấy tờ.");
   } catch (error) { toast(error.message, "error"); }
 }
@@ -1722,7 +1734,7 @@ function startSimulation() {
 }
 // The rules the server applies to any reading, checked here first. The wording follows where the numbers came from.
 function vitalsProblem(values, fromPaper = false) {
-  if (!KEYS.some(key => values[key] != null)) return fromPaper ? "Hãy nhập ít nhất một chỉ số, hoặc bỏ chọn mục thêm vào Lịch sử đo." : "Hãy nhập ít nhất một chỉ số vừa đo.";
+  if (!KEYS.some(key => values[key] != null)) return fromPaper ? "Hãy nhập ít nhất một chỉ số, hoặc bỏ chọn mục thêm vào Lịch sử." : "Hãy nhập ít nhất một chỉ số vừa đo.";
   if ((values.systolic == null) !== (values.diastolic == null)) return "Huyết áp cần cả số trên (tâm thu) và số dưới (tâm trương).";
   if (values.systolic != null && values.systolic <= values.diastolic) return "Số tâm thu cần lớn hơn số tâm trương. Hãy kiểm tra lại " + (fromPaper ? "giấy tờ." : "máy đo.");
   return "";
@@ -2205,7 +2217,7 @@ function renderAssistantSources() {
     ["Hồ sơ", state.health ? 1 : 0],
     ["Tiền sử gia đình", state.health?.family_history?.length || 0],
     ["Lần đo", Math.min(10, state.records.length)],
-    ["Giấy tờ", Math.min(5, state.medicalRecords.length)],
+    ["Giấy tờ gần nhất", Math.min(5, state.medicalRecords.length)],
     ["Thuốc", Math.min(30, state.medications.length)],
   ];
   $("#assistant-sources").innerHTML = counts.map(([label, count]) =>
@@ -2304,10 +2316,11 @@ function clearAccount() {
   state.scanUrl = null; $("#scan-image").removeAttribute("src"); $("#scan-save").removeAttribute("href");
   reportLayer = false;
   state.devices = null;
-  state.user = null; state.health = null; state.records = []; state.result = null; state.risk = null; state.weeklyBP = null; state.riskFailed = false; state.medicalRecords = []; state.medications = []; state.medicationIntakes = null; state.assistantHistory = []; state.assistantSelectedId = null; state.assistantBusy = false; state.pendingAssessments = []; state.viewingMedications = null; state.recordsTab = null; state.historyAll = false; state.editing = false; state.rating = 0;
+  state.user = null; state.health = null; state.records = []; state.result = null; state.risk = null; state.weeklyBP = null; state.riskFailed = false; state.medicalRecords = []; state.medications = []; state.medicationIntakes = null; state.assistantHistory = []; state.assistantSelectedId = null; state.assistantBusy = false; state.pendingAssessments = []; state.viewingMedications = null; state.recordsTab = null; state.historyAll = false; state.historyTab = "charts"; state.editing = false; state.rating = 0;
   renderSyncStatus();
   resetMedicalUpload();
-  $("#profile-content").innerHTML = ""; $("#genetics-content").innerHTML = ""; $("#history-list").innerHTML = ""; $("#medical-record-list").innerHTML = ""; $("#result-detail").innerHTML = "";
+  $("#profile-content").innerHTML = ""; $("#genetics-content").innerHTML = ""; $("#history-list").innerHTML = ""; $("#result-detail").innerHTML = "";
+  $$("[data-medical-record-list]").forEach(list => { list.innerHTML = ""; });
   $("#assistant-result").innerHTML = '<h2>Kết quả</h2><p class="note">Chọn nội dung rồi nhấn Phân tích hồ sơ.</p>';
   $("#assistant-history").innerHTML = '<p class="note">Chưa có bản phân tích.</p>';
   $("#assistant-form").reset();
@@ -2552,7 +2565,7 @@ function bindEvents() {
   $("#delete-assessment").addEventListener("click", event => deleteAssessment(event.currentTarget.dataset.id));
   $("#new-measurement").addEventListener("click", () => openMeasurement());
   $("#upload-record").addEventListener("click", openMedicalUpload);
-  $("#today-document-upload").addEventListener("click", () => openMedicalUpload({ fromDashboard: true }));
+  $("#today-document-upload").addEventListener("click", openMedicalUpload);
   $("#add-medicine").addEventListener("click", () => openMedicine());
   $("#medicine-form").addEventListener("submit", saveMedicine);
   $("#care-panel").addEventListener("change", event => {

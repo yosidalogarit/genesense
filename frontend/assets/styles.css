@@ -574,13 +574,24 @@ details[open]::details-content { block-size: auto; }
 .measurement-tabs button { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 8px; border-radius: 10px; font-size: .889rem; background: transparent; }
 .measurement-tabs button + button { border-left: 0; }
 .measurement-tabs button.active { background: transparent; color: var(--blue); }
-/* The white pill slides under the active button (every one of these controls has two buttons). */
+/* The white pill slides under the active button; History has three choices. */
 .measurement-tabs { position: relative; }
 .measurement-tabs button { position: relative; z-index: 1; transition: color .2s ease-out; }
 .measurement-tabs::before { content: ""; position: absolute; top: 5px; left: 5px; width: calc(50% - 7.5px); height: calc(100% - 10px); border-radius: 10px; background: #fff; box-shadow: 0 2px 6px #16345e14; opacity: 0; transition: transform .28s var(--ease-smooth), opacity .2s ease-out; }
 .measurement-tabs:has(> button.active)::before { opacity: 1; }
 .measurement-tabs:has(> button:last-child.active)::before { transform: translateX(calc(100% + 5px)); }
-.history-tabs { max-width: 520px; margin-bottom: 28px; }
+.history-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 620px; margin-bottom: 28px; }
+.history-tabs button { min-width: 0; }
+.history-tabs::before { width: calc((100% - 20px) / 3); }
+#history-view .history-tabs[data-active="readings"]::before { transform: translateX(calc(100% + 5px)); }
+#history-view .history-tabs[data-active="documents"]::before { transform: translateX(calc(200% + 10px)); }
+body.viewing .history-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+body.viewing .history-tabs::before { width: calc(50% - 7.5px); }
+@media (max-width: 760px) {
+  .history-tabs button { gap: 5px; padding-inline: 3px; font-size: .8rem; white-space: nowrap; }
+  .history-tabs button .icon { width: 18px; height: 18px; }
+}
+@media (max-width: 380px) { .history-tabs button .icon { display: none; } }
 #history-charts-panel:not(.hidden), #history-readings-panel:not(.hidden) { animation: view-in .22s var(--ease-out); }
 #measurement-form .btn { margin-top: 20px; }
 .device-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
