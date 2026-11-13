@@ -19,7 +19,7 @@ import android.view.Window;
 import android.graphics.Color;
 
 public class MainActivity extends Activity {
-    private static final String HOME = "https://genesense-gs1.vercel.app/";
+    private static final String HOME = "https://genesense-five.vercel.app/";
     private static final int PICK_FILE = 20;
     private static final int BLUETOOTH_PERMISSION = 21;
     private WebView web;
