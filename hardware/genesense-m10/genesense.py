@@ -18,7 +18,12 @@ DEVICE_NAME = "GeneSense-M10"                # the name shown in the app's devic
 MEASURE_SECONDS = 30                         # one measurement with the real sensor (a new value every 4 s)
 SETTLE_SECONDS = 8                           # ignore the first readings while the finger settles
 MOCK_SECONDS = 15                            # one measurement with mock values
-MOVE_LIMIT = 0.15                            # how much moving the M10 restarts the count, in g. Bigger = less strict
+MOVE_LIMIT = 0.35                            # how much the M10 may move (smoothed, in g) before the count pauses.
+                                             # Bigger = less strict. It must also last MOVE_SECONDS: a bump is ignored
+MOVE_SECONDS = 0.8
+LIFT_SECONDS = 8                             # this long without a good reading = the finger came off
+GHOST_LIMIT = 0.2                            # a heart rate this far (20 %, at least 15 bpm) from the average so far is
+                                             # treated as a ghost reading (a bump or a loose finger) and left out
 VOICE_VOLUME = 0.8                           # 0.1 quiet .. 1.0 loud
 TIMEZONE = "Asia/Ho_Chi_Minh"
 CLOCK_AFTER = 45                             # seconds without a touch: the home screen becomes a big clock
@@ -165,9 +170,13 @@ class App:
         # measuring
         self.live_hr = self.live_spo2 = 0
         self.good_streak = self.bad_streak = 0
-        self.hr_samples, self.sp_samples = [], []
+        self.hr_samples, self.sp_samples, self.sample_t = [], [], []   # readings that count
+        self.rejected = []                   # recent ghost readings, (time, hr, spo2)
+        self.ghosts = 0
         self.measure_start = self.hold_until = self.baseline_at = 0.0
         self.baseline = None
+        self.acc_recent = []
+        self.move_count = 0
         self.restarts = 0
         self.last_poll = self.last_sample = self.last_accel = self.last_scan = self.last_light = 0.0
         self.last_tick_second = -1
@@ -393,7 +402,9 @@ class App:
 
     def begin_count(self):
         now = time.monotonic()
-        self.hr_samples, self.sp_samples = [], []
+        self.hr_samples, self.sp_samples, self.sample_t = [], [], []
+        self.rejected, self.ghosts = [], 0
+        self.acc_recent, self.move_count = [], 0
         self.measure_start = now
         self.hold_until = 0
         self.baseline_at = now + 0.5
@@ -420,7 +431,9 @@ class App:
         if good:
             self.good_streak += 1
             self.bad_streak = 0
-            self.live_hr, self.live_spo2 = hr, sp
+            if self.screen != "measure":   # while counting, the screen shows the average of kept readings
+                self.live_hr = hr
+            self.live_spo2 = sp
         else:
             self.bad_streak += 1
             self.good_streak = 0
@@ -432,8 +445,32 @@ class App:
             counting = self.screen == "measure" and now >= self.hold_until and now > self.measure_start
         if counting and good and now - self.last_sample >= (4.0 if self.sensor_ok else 1.0):
             self.last_sample = now
-            self.hr_samples.append(hr)
-            self.sp_samples.append(sp)
+            self.add_sample(now, hr, sp)
+
+    def add_sample(self, now, hr, sp):
+        """Keeps a reading unless it is a ghost: the SEN0518 sometimes reports absurd heart rates (150-220) when
+        the finger shifts or the sensor is bumped. Each reading is compared with the average of the ones kept."""
+        if len(self.hr_samples) >= 2:
+            avg = sum(self.hr_samples) / float(len(self.hr_samples))
+            if abs(hr - avg) > max(15.0, GHOST_LIMIT * avg):
+                self.ghosts += 1
+                self.rejected.append((now, hr, sp))
+                self.rejected = self.rejected[-3:]
+                print("Ignored heart rate %d (average so far %d)" % (hr, round(avg)))
+                # three ghosts in a row that agree with each other: the first readings were the odd ones
+                r = [h for _, h, _ in self.rejected]
+                if len(r) == 3 and max(r) - min(r) <= max(15.0, GHOST_LIMIT * median(r)) and \
+                        all(t > self.sample_t[-1] for t, _, _ in self.rejected):
+                    print("The readings settled at about %d: starting the average again from them" % round(median(r)))
+                    self.sample_t = [t for t, _, _ in self.rejected]
+                    self.hr_samples = r
+                    self.sp_samples = [x for _, _, x in self.rejected]
+                    self.rejected = []
+                return
+        self.sample_t.append(now)
+        self.hr_samples.append(hr)
+        self.sp_samples.append(sp)
+        self.live_hr = int(round(sum(self.hr_samples) / float(len(self.hr_samples))))
 
     def measure_tick(self, now):
         if self.screen == "place":
@@ -451,7 +488,7 @@ class App:
             return
         if self.screen != "measure":
             return
-        if self.sensor_ok and self.bad_streak >= 4:     # finger lifted
+        if self.sensor_ok and self.bad_streak >= LIFT_SECONDS:     # finger lifted (short drop-outs only pause)
             self.go("place")
             self.voice.say("nofinger", cut=True)
             return
@@ -460,30 +497,42 @@ class App:
             import math
             self.wave.append(math.sin(t) + 0.35 * math.sin(2 * t + 0.6))
             del self.wave[:-120]
-        # hold still: the M10's motion sensor against the position at the start
+        # hold still: the M10's motion sensor, smoothed over 1 s, against the position at the start. A bump or a
+        # small shift is ignored; only movement that lasts MOVE_SECONDS pauses the count (it never starts over).
         if now - self.last_accel >= 0.2:
             self.last_accel = now
             a = self.board.accel()
             if a is not None:
+                self.acc_recent = (self.acc_recent + [a])[-5:]
+                smooth = [sum(v[i] for v in self.acc_recent) / len(self.acc_recent) for i in range(3)]
                 if self.baseline is None:
                     if now >= self.baseline_at:
-                        self.baseline = a
+                        self.baseline = smooth
                 elif now >= self.hold_until:
-                    moved = max(abs(a[i] - self.baseline[i]) for i in range(3))
-                    if moved > MOVE_LIMIT:
-                        print("Moved by %.2f g (limit %.2f): restarting" % (moved, MOVE_LIMIT))
+                    moved = max(abs(smooth[i] - self.baseline[i]) for i in range(3))
+                    self.move_count = self.move_count + 1 if moved > MOVE_LIMIT else 0
+                    if moved <= MOVE_LIMIT / 2:  # still: let the position drift slowly (a slow tilt is fine)
+                        self.baseline = [self.baseline[i] * 0.95 + smooth[i] * 0.05 for i in range(3)]
+                    if self.move_count * 0.2 >= MOVE_SECONDS:
+                        self.move_count = 0
                         self.restarts += 1
-                        if self.restarts > 5:
+                        print("Moved by %.2f g (limit %.2f): pausing" % (moved, MOVE_LIMIT))
+                        if self.restarts > 8:
                             self.toast("Tay cử động nhiều, thử lại", ATTN)
                             self.voice.say("err", cut=True)
                             self.go("idle")
                             return
                         self.voice.say("hold", cut=True)
+                        # readings from the last 4 s may be spoiled by the movement: drop them, keep the rest
+                        keep = [i for i, t in enumerate(self.sample_t) if t < now - 4]
+                        self.sample_t = [self.sample_t[i] for i in keep]
+                        self.hr_samples = [self.hr_samples[i] for i in keep]
+                        self.sp_samples = [self.sp_samples[i] for i in keep]
                         self.hold_until = now + 2.5
-                        self.measure_start = now + 2.5
+                        self.measure_start += 2.5    # the countdown waits during the pause
                         self.baseline_at = now + 2.3
                         self.baseline = None
-                        self.hr_samples, self.sp_samples = [], []
+                        self.acc_recent = []
                         self.last_tick_second = -1
                         self.dirty = True
                         return
@@ -493,7 +542,9 @@ class App:
             self.last_tick_second = left
             self.voice.say("tick")
         if elapsed >= self.measure_seconds():
-            self.finish()
+            # too few good readings yet (ghosts left out, pauses): keep going up to 24 s more
+            if len(self.hr_samples) >= 4 or elapsed >= self.measure_seconds() + 24 or not self.sensor_ok:
+                self.finish()
 
     def finish(self):
         hr, sp = list(self.hr_samples), list(self.sp_samples)
@@ -502,9 +553,9 @@ class App:
             self.voice.say("err", cut=True)
             self.go("idle")
             return
-        print("Readings HR: %s  SpO2: %s" % (hr, sp))
+        print("Readings HR: %s  SpO2: %s  (ghost readings left out: %d)" % (hr, sp, self.ghosts))
         if not self.mock:                    # throw away odd readings; if too many are odd, show no number
-            hr_k, sp_k = keep_near(hr, 12), keep_near(sp, 3)
+            hr_k, sp_k = keep_near(hr, max(12, 0.15 * median(hr))), keep_near(sp, 3)
             print("Kept %d/%d heart rate and %d/%d SpO2 readings" % (len(hr_k), len(hr), len(sp_k), len(sp)))
             if len(hr_k) < 3 or len(sp_k) < 3 or len(hr_k) * 3 < len(hr) * 2 or len(sp_k) * 3 < len(sp) * 2:
                 self.toast("Số đo chưa ổn định, đo lại", ATTN)
@@ -830,9 +881,13 @@ class App:
             c.mark((W - w) / 2, 62, ATTN)
             c.text((W - w) / 2 + 22, 76, "Giữ yên tay!", ui.AMBER, ui.TITLE)
         else:
-            c.text_c(W / 2, 68, "Đang đo...", ui.INK, ui.TITLE)
+            extra = elapsed >= self.measure_seconds()
+            c.text_c(W / 2, 68, "Đo thêm một chút..." if extra else "Đang đo...", ui.INK, ui.TITLE)
             if self.sensor_ok:
-                c.text_c(W / 2, 87, "Đã đọc %d lần · số mới mỗi 4 s" % len(self.hr_samples), ui.INK2, ui.SMALL)
+                note = "Đã đọc %d lần · số mới mỗi 4 s" % len(self.hr_samples)
+                if self.ghosts:
+                    note = "Đã đọc %d lần · bỏ %d số lạ" % (len(self.hr_samples), self.ghosts)
+                c.text_c(W / 2, 87, note, ui.INK2, ui.SMALL)
         frac = min(1.0, max(0.0, elapsed / float(self.measure_seconds())))
         cy = 150
         c.disc(W / 2, cy, 60, ui.SURF)

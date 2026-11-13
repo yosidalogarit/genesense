@@ -16,6 +16,18 @@ It is a test device, not a medical device; every screen says so.
   - **Times:** the app only stores Sáng/Trưa/Chiều/Tối, so the clock times live on the device (`MED_TIMES`, default 07:00 / 11:30 / 17:00 / 20:00). Change them in Menu → Thuốc by tapping a row.
   - **The reminder:** within 2 hours of a time, if a medicine is not ticked, the "Đến giờ uống thuốc" screen shows the medicines with their dose and "trước/sau ăn", plus a voice clip. It asks at most 3 times; "Để sau" waits 10 minutes.
   - **Ticking:** "Đã uống" ticks them in the app (`PUT /api/devices/medications/{id}/intakes/{slot}`). Ticks are queued (`intake_queue`) and retried until the server answers.
+- **Measuring tolerance and ghost readings** (13 November 2026; the owner found that slight movement reset the whole measurement).
+  - **Movement:** the motion check is smoothed over 1 s and must stay above `MOVE_LIMIT` (0.35 g, was 0.15) for `MOVE_SECONDS` (0.8 s), so bumps and a shaky hand are ignored.
+    - Real movement now **pauses** the count for 2.5 s and drops only the readings from the last 4 s; it no longer starts over.
+    - The "still" position follows slow tilts.
+    - The measurement gives up after 8 pauses.
+  - **Finger off:** it takes `LIFT_SECONDS` (8 s, was 4) without a good reading before the screen goes back to "Đeo cảm biến". Shorter drop-outs only pause.
+  - **Ghost heart rates:** the SEN0518 sometimes reports 150–220 bpm when the finger shifts.
+    - Each new reading is compared with the average of the ones kept, and one further than `GHOST_LIMIT` (20 %, at least 15 bpm) is left out ("bỏ N số lạ" on screen).
+    - If 3 left-out readings in a row agree with each other, the first ones were the odd ones, so the average starts again from those 3. A real, steady high rate therefore still reaches the emergency screen.
+    - The final value is the median of the readings within 15 % of the middle.
+    - With fewer than 4 good readings at the end, it measures up to 24 s longer ("Đo thêm một chút...").
+  - **Tested** with a simulated sensor and motion: clean, ghost spikes, ghosts at the start, a 4 s finger slip, one bump, 2 s of movement, a shaky hand, a real 158 bpm (shows the emergency screen).
 - **Clock and screen sleep.** After `CLOCK_AFTER` (45 s) without a touch, a resting screen becomes a big clock. It shows the date, the next medicine, the next measuring reminder and the last reading.
   - After `SLEEP_AFTER` (120 s) the backlight drops to `SLEEP_LEVEL` (10 %). The first touch or button press only wakes the screen.
   - Reminders, medicines and emergencies wake it themselves.
