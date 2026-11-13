@@ -100,6 +100,75 @@ def test_first_login_onboarding_and_profile_survives_reload(client):
     assert health["family_history"][1]["knowledge"] == "unknown"
 
 
+def test_clinical_review_requires_consent_and_stays_account_scoped(client, monkeypatch):
+    from types import SimpleNamespace
+    from backend.app.schemas import ClinicalReviewResult
+
+    assert client.get("/api/clinical-reviews").status_code == 401
+    assert client.post("/api/clinical-review", json={"consent": True}).status_code == 401
+    first = login(client)
+    assert client.post("/api/clinical-review", json={"consent": True}).status_code == 409
+    assert client.put("/api/profile", json=PROFILE).status_code == 200
+    assert client.post("/api/assessments", json=MEASUREMENT).status_code == 201
+    assert client.post("/api/clinical-review", json={"consent": False}).status_code == 422
+    assert client.post("/api/clinical-review", json={"consent": True}).status_code == 403
+
+    async def use_real_account():
+        async with client.db_factory() as session:
+            await session.execute(update(User).where(User.id == first["id"]).values(is_demo=False))
+            await session.commit()
+
+    asyncio.run(use_real_account())
+
+    received = []
+
+    async def review(context):
+        received.append(context)
+        return ClinicalReviewResult(summary="Có một lần đo được lưu.", findings=[], missing_data=[])
+
+    monkeypatch.setattr(main, "ai_service", SimpleNamespace(available=True, review_clinical_context=review))
+    response = client.post("/api/clinical-review", json={"consent": True, "focus": "family", "question": "Cần hỏi gì?"})
+    assert response.status_code == 200, response.text
+    assert received[0]["review_focus"] == "family"
+    assert received[0]["user_question"] == "Cần hỏi gì?"
+    assert len(received[0]["readings"]) == 1
+    assert len(received[0]["family_history"]) == 2
+    assert "display_name" not in received[0]["profile"]
+    history = client.get("/api/clinical-reviews")
+    assert history.status_code == 200 and len(history.json()) == 1
+    assert history.json()[0]["result"]["summary"] == response.json()["summary"]
+    review_id = history.json()[0]["id"]
+    assert client.delete("/api/clinical-reviews/unknown").status_code == 404
+    duplicate = client.post("/api/clinical-review", json={"consent": True})
+    assert duplicate.status_code == 200
+    assert client.delete("/api/clinical-reviews/" + review_id).status_code == 204
+    assert len(client.get("/api/clinical-reviews").json()) == 1
+    monkeypatch.setattr(main, "CLINICAL_REVIEWS_PER_HOUR", 1)
+    assert client.post("/api/clinical-review", json={"consent": True}).status_code == 429
+    remaining_id = client.get("/api/clinical-reviews").json()[0]["id"]
+    assert client.post("/api/auth/logout").status_code == 200
+    second = login(client)
+    assert second["id"] != first["id"]
+    assert client.get("/api/clinical-reviews").json() == []
+    assert client.delete("/api/clinical-reviews/" + remaining_id).status_code == 404
+
+
+def test_clinical_review_reports_missing_ai_configuration(client, monkeypatch):
+    from types import SimpleNamespace
+
+    user = login(client)
+    assert client.put("/api/profile", json=PROFILE).status_code == 200
+    async def use_real_account():
+        async with client.db_factory() as session:
+            await session.execute(update(User).where(User.id == user["id"]).values(is_demo=False))
+            await session.commit()
+
+    asyncio.run(use_real_account())
+    monkeypatch.setattr(main, "ai_service", SimpleNamespace(available=False))
+    response = client.post("/api/clinical-review", json={"consent": True})
+    assert response.status_code == 503
+
+
 def test_account_isolation_including_feedback_and_revoked_cookie(client):
     first = login(client)
     client.put("/api/profile", json=PROFILE)
@@ -178,7 +247,9 @@ def test_profile_validation_and_partial_measurements(client):
     # Blood sugar keeps when it was measured; the context is dropped when there is no blood sugar.
     fasting = client.post("/api/assessments", json={"vitals": {"glucose": 110, "glucose_context": "fasting"}})
     assert fasting.json()["measured_vitals"]["glucose_context"] == "fasting"
-    assert client.get("/api/assessments").json()[0]["vitals"]["glucose_context"] == "fasting"
+    # Multiple readings can share the clock's timestamp resolution on Windows.
+    saved = next(row for row in client.get("/api/assessments").json() if row["id"] == fasting.json()["id"])
+    assert saved["vitals"]["glucose_context"] == "fasting"
     alone = client.post("/api/assessments", json={"vitals": {"heart_rate": 70, "glucose_context": "after_meal"}})
     assert alone.json()["measured_vitals"]["glucose_context"] is None
     assert client.post("/api/assessments", json={"vitals": {"glucose": 110, "glucose_context": "bedtime"}}).status_code == 422
@@ -289,6 +360,21 @@ def test_expired_sessions_rejected(client):
 
     asyncio.run(expire())
     assert client.get("/api/auth/me").status_code == 401
+
+
+def test_document_sync_retry_keeps_one_historical_reading(client):
+    login(client)
+    assert client.put("/api/profile", json=PROFILE).status_code == 200
+    body = {"vitals": {"systolic": 146, "diastolic": 94}, "source": "document",
+            "measured_on": "2024-03-15", "client_id": str(uuid4())}
+    first = client.post("/api/assessments", json=body)
+    retry = client.post("/api/assessments", json=body)
+    assert first.status_code == retry.status_code == 201
+    assert first.json()["id"] == retry.json()["id"]
+    rows = client.get("/api/assessments").json()
+    assert len(rows) == 1
+    assert rows[0]["vitals"]["source"] == "document"
+    assert rows[0]["created_at"].startswith("2024-03-15")
 
 
 def test_google_callback_creates_one_account_and_remembers_onboarding(client, monkeypatch):

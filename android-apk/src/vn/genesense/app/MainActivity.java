@@ -37,6 +37,7 @@ public class MainActivity extends Activity {
         setContentView(web);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
+        settings.setUserAgentString(settings.getUserAgentString() + " GeneSenseAndroid/0.4.1");
         settings.setDomStorageEnabled(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
@@ -47,6 +48,15 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(true);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                Uri target = Uri.parse(url);
+                if ("https".equals(target.getScheme()) && "genesense-five.vercel.app".equals(target.getHost()) &&
+                    "/api/auth/google".equals(target.getPath()) && target.getQueryParameter("mobile") != null) {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW, target)); }
+                    catch (android.content.ActivityNotFoundException error) {
+                        Toast.makeText(MainActivity.this, "Cần trình duyệt để đăng nhập Google", Toast.LENGTH_LONG).show();
+                    }
+                    return true;
+                }
                 if (url.startsWith(HOME)) return false;
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 return true;
@@ -61,7 +71,20 @@ public class MainActivity extends Activity {
                 catch (Exception error) { files = null; return false; }
             }
         });
-        web.loadUrl(HOME);
+        web.loadUrl(signInReturn(getIntent()));
+    }
+
+    // Google sign-in ends at genesense://auth?code=...; the page redeems the code from "#app-login?...".
+    private String signInReturn(Intent intent) {
+        Uri data = intent == null ? null : intent.getData();
+        if (data == null || !"genesense".equals(data.getScheme()) || !"auth".equals(data.getHost())) return HOME;
+        return HOME + "#app-login?" + (data.getEncodedQuery() == null ? "" : data.getEncodedQuery());
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String url = signInReturn(intent);
+        if (!HOME.equals(url)) web.loadUrl(url);
     }
 
     public void requestBluetoothPermissions() {

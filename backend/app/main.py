@@ -7,11 +7,12 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
@@ -23,15 +24,19 @@ from .config import get_settings
 from .devices import current_device, router as devices_router
 from .database import engine, get_session
 from .migrations import migrate_schema
-from .models import Assessment, Avatar, Device, Feedback, MedicalRecord, Medication, MedicationIntake, User
+from .mobile_auth import router as mobile_auth_router
+from .models import Assessment, Avatar, ClinicalReview, Device, Feedback, MedicalRecord, Medication, MedicationIntake, User
 from .schemas import (AccountProfile, AssessmentCreate, AssessmentHistoryItem, AssessmentResult,
+                      ClinicalReviewHistoryItem, ClinicalReviewRequest, ClinicalReviewResult, ClinicalReviewSource,
                       FeedbackCreate, FeedbackResult, MedicalDocumentAnalyzeResult,
                       MedicalRecordCreate, MedicalRecordResult, MeasurementCreate,
                       MedicationInput, MedicationIntakeResult, MedicationIntakeUpdate, MedicationResult,
                       VitalSample, WeeklyBloodPressureSummary)
 from .services.ai_service import AIInsightService
+from .services.ai_service import AIServiceError
 from .services.risk_engine import calculate_risk, risk_overview
 
+CLINICAL_REVIEWS_PER_HOUR = 10
 ROOT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT_DIR / "frontend"
 settings = get_settings()
@@ -116,6 +121,7 @@ async def privacy_and_csrf(request: Request, call_next):
 
 
 app.include_router(auth_router)
+app.include_router(mobile_auth_router)
 app.include_router(care_router)
 app.include_router(devices_router)
 
@@ -175,6 +181,117 @@ async def get_risk(user: User = Depends(current_user), session: AsyncSession = D
     if not user.onboarding_completed or not user.health_profile:
         raise HTTPException(409, "Hãy hoàn thành hồ sơ sức khỏe trước.")
     return risk_overview(AccountProfile.model_validate(user.health_profile), await current_vital_score(user.id, session))
+
+
+@app.post("/api/clinical-review", response_model=ClinicalReviewResult)
+async def clinical_review(
+    payload: ClinicalReviewRequest,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if not user.onboarding_completed or not user.health_profile:
+        raise HTTPException(409, "Hãy hoàn thành hồ sơ trước khi phân tích.")
+    if user.is_demo:
+        raise HTTPException(403, "Trợ lý AI chỉ dùng với tài khoản của bạn, không dùng với hồ sơ mẫu.")
+    if not ai_service.available:
+        raise HTTPException(503, "Trợ lý AI chưa khả dụng trên bản này.")
+    # Each review is a paid AI call: a few per hour per account is plenty for real use.
+    recent = await session.scalar(select(func.count()).select_from(ClinicalReview).where(
+        ClinicalReview.user_id == user.id, ClinicalReview.created_at >= datetime.now(timezone.utc) - timedelta(hours=1)))
+    if recent >= CLINICAL_REVIEWS_PER_HOUR:
+        raise HTTPException(429, "Bạn đã dùng trợ lý AI nhiều lần trong giờ này. Hãy thử lại sau ít phút.")
+
+    profile = AccountProfile.model_validate(user.health_profile)
+    readings = (await session.scalars(select(Assessment).where(Assessment.user_id == user.id)
+                                     .order_by(Assessment.created_at.desc()).limit(10))).all()
+    documents = (await session.scalars(select(MedicalRecord).where(MedicalRecord.user_id == user.id)
+                                      .order_by(MedicalRecord.created_at.desc()).limit(5))).all()
+    medications = (await session.scalars(select(Medication).where(Medication.user_id == user.id)
+                                        .order_by(Medication.created_at.desc()).limit(30))).all()
+    intakes = (await session.scalars(select(MedicationIntake).where(MedicationIntake.user_id == user.id)
+                                    .order_by(MedicationIntake.taken_at.desc()).limit(30))).all()
+    sources = [
+        ClinicalReviewSource(label="Hồ sơ", count=1),
+        ClinicalReviewSource(label="Tiền sử gia đình", count=len(profile.family_history)),
+        ClinicalReviewSource(label="Lần đo", count=len(readings)),
+        ClinicalReviewSource(label="Giấy tờ", count=len(documents)),
+        ClinicalReviewSource(label="Thuốc", count=len(medications)),
+    ]
+    context = {
+        "profile": profile.profile.model_dump(mode="json"),
+        "health_notes": {
+            "personal": profile.personal_notes[:700],
+            "paternal": profile.paternal_notes[:350],
+            "maternal": profile.maternal_notes[:350],
+        },
+        "family_history": [item.model_dump(mode="json") for item in profile.family_history],
+        "parents_related": profile.parents_related,
+        "family_risk": jsonable_encoder(
+            risk_overview(profile, await current_vital_score(user.id, session))
+        ),
+        "readings": [
+            {"recorded_at": row.created_at.isoformat(), "vitals": row.vitals}
+            for row in readings
+        ],
+        "documents": [
+            {"saved_at": row.created_at.isoformat(),
+             "document_type": row.analysis.get("document_type"),
+             "document_date": row.analysis.get("document_date"),
+             "summary": str(row.analysis.get("summary") or "")[:700],
+             "metrics": (row.analysis.get("metrics") or [])[:20],
+             "conditions": (row.analysis.get("conditions") or [])[:15],
+             "warnings": (row.analysis.get("warnings") or [])[:10],
+             "verification": "AI đọc từ ảnh; người dùng cần đối chiếu bản gốc"}
+            for row in documents
+        ],
+        "medications": [
+            {"name": row.name, "strength": row.strength, "amount": row.amount,
+             "start_date": row.start_date, "days": row.days,
+             "schedule": {slot: getattr(row, slot) for slot in ("morning", "noon", "afternoon", "evening")},
+             "note": row.note[:120]}
+            for row in medications
+        ],
+        "recorded_intakes": [
+            {"scheduled_on": row.scheduled_on, "slot": row.slot}
+            for row in intakes
+        ],
+        "review_focus": payload.focus,
+        "user_question": payload.question.strip(),
+        "source_warning": "Dữ liệu tự nhập và nội dung AI đọc từ ảnh chưa được bác sĩ xác minh.",
+    }
+    try:
+        result = await ai_service.review_clinical_context(context)
+    except AIServiceError as error:
+        raise HTTPException(503, str(error)) from error
+    result.sources = sources
+    session.add(ClinicalReview(user_id=user.id, result=result.model_dump(mode="json")))
+    await session.commit()
+    return result
+
+
+@app.get("/api/clinical-reviews", response_model=list[ClinicalReviewHistoryItem])
+async def clinical_review_history(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    rows = (await session.scalars(select(ClinicalReview).where(ClinicalReview.user_id == user.id)
+                                  .order_by(ClinicalReview.created_at.desc()).limit(20))).all()
+    return [ClinicalReviewHistoryItem(id=row.id, created_at=row.created_at, result=row.result) for row in rows]
+
+
+@app.delete("/api/clinical-reviews/{review_id}", status_code=204)
+async def delete_clinical_review(
+    review_id: str,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    row = await session.scalar(select(ClinicalReview).where(
+        ClinicalReview.id == review_id, ClinicalReview.user_id == user.id
+    ))
+    if not row:
+        raise HTTPException(404, "Không tìm thấy bản phân tích.")
+    await session.delete(row)
+    await session.commit()
 
 
 @app.post("/api/assessments", response_model=AssessmentResult, status_code=201)

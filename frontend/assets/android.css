@@ -1,0 +1,11 @@
+/* Android appearance is isolated from the iOS theme. */
+.platform-android { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.platform-android .mobile-nav button .icon { width: 20px; height: 20px; }
+.platform-android .avatar { width: 36px; height: 36px; }
+.platform-android .site-header-inner { min-height: 60px; }
+.platform-android dialog { border-radius: 16px; }
+@media (max-width: 760px) {
+  .platform-android .app-site-header, .platform-android .mobile-nav { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  .platform-android .nav-scrim { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .platform-android .nav-drawer { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+}

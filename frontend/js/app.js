@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { loginWithGoogle, resumeGoogleLogin } from "./google-login.js";
 import { HealthBleClient, VitalSimulator } from "./ble.js";
 import { TrendChart } from "./chart.js";
 import { hydrateIcons, icon } from "./icons.js";
@@ -80,7 +81,7 @@ const isReal = record => (record.vitals?.source || "manual") !== "simulation";
 const DOCUMENT_TYPES = { lab_result: "Kết quả xét nghiệm", prescription: "Đơn thuốc", discharge_note: "Giấy ra viện", imaging_report: "Kết quả chẩn đoán hình ảnh", vaccination: "Tiêm chủng", other: "Tài liệu sức khỏe" };
 const FLAG_NAMES = { normal: "Trong khoảng tham chiếu", high: "Cao", low: "Thấp", abnormal: "Cần xem lại", unknown: "Chưa rõ" };
 const state = { viewing: null, viewingMedications: null, own: null, care: { patients: [], caregivers: [] }, user: null, health: null, records: [], result: null, risk: null, weeklyBP: null, step: 0, editing: false, rating: 0,
-  medicalRecords: [], medications: [], medicationIntakes: null, pendingAssessments: [], recordsTab: null, editingMedicine: null, pendingMedical: null, documentAiEnabled: false, aiProvider: "AI", previewUrl: null, uploadFile: null,
+  medicalRecords: [], medications: [], medicationIntakes: null, pendingAssessments: [], recordsTab: null, editingMedicine: null, pendingMedical: null, documentAiEnabled: false, aiProvider: "AI", assistantHistory: [], assistantBusy: false, previewUrl: null, uploadFile: null,
   deviceSource: null, deviceValues: {}, deviceTimes: {}, samples: [], deviceEpoch: 0, authEpoch: 0, busy: false, view: "dashboard" };
 let ble = null;
 let simulator = null;
@@ -360,19 +361,19 @@ function setNavDrawer(open, restoreFocus = true) {
 
 function navigate(view) {
   if (!state.user || !state.health) return;
-  state.view = ["dashboard", "records", "history", "genetics", "profile"].includes(view) && !(state.viewing && view === "records") ? view : "dashboard";
+  state.view = ["dashboard", "records", "history", "genetics", "assistant", "profile"].includes(view) && !(state.viewing && ["records", "assistant"].includes(view)) ? view : "dashboard";
   $$(".view").forEach(el => el.classList.toggle("hidden", el.id !== state.view + "-view"));
   $$("nav [data-nav]").forEach(button => {
     button.classList.toggle("active", button.dataset.nav === state.view || (state.view === "genetics" && button.dataset.nav === "profile" && Boolean(button.closest(".mobile-nav"))));
     if (button.dataset.nav === state.view) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  const pageName = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Di truyền", profile: "Hồ sơ" }[state.view];
+  const pageName = { dashboard: "Hôm nay", records: "Thuốc và giấy tờ", history: "Lịch sử đo", genetics: "Di truyền", assistant: "Trợ lý AI", profile: "Hồ sơ" }[state.view];
   document.title = pageName + " - GeneSense";
-  $("#menu-page").textContent = pageName;
   window.history.replaceState(null, "", "#" + state.view);
   if (state.view === "profile") renderProfile();
   if (state.view === "genetics") renderGenetics();
+  if (state.view === "assistant") { renderAssistantSources(); void refreshAssistantHistory(); }
   if (state.view === "records") { renderMedicalRecords(); renderRecordsTab(); }
   if (state.view === "history") { renderHistory(); renderTips(); renderTrends(); if (!state.viewing) void refreshRecords(); }
   window.scrollTo(0, 0);
@@ -640,10 +641,12 @@ function renderTrends() {
   $("#chart-context").textContent = source ? "Tối đa 30 lần đo gần nhất" : "";
   $("#chart-help").textContent = (matchMedia("(hover: hover) and (pointer: fine)").matches ? "Di chuột" : "Chạm") + " vào biểu đồ để xem từng lần đo.";
   $("#chart-help").classList.toggle("hidden", !rows.length);
+  let hasPoints = false;
   for (const [id, spec] of Object.entries(TRENDS)) {
     const card = $('[data-trend="' + id + '"]');
     revealPanelOnce(card, "trend-" + id);
     const points = rows.filter(row => spec.series.every(([key]) => row.vitals[key] != null));
+    if (points.length) hasPoints = true;
     card.querySelector(".trend-empty").classList.toggle("hidden", points.length > 0);
     const host = card.querySelector(".trend-chart");
     host.classList.toggle("hidden", !points.length);
@@ -658,6 +661,7 @@ function renderTrends() {
       series: spec.series.map(([key, label, color]) => ({ label, color, dash: key === "diastolic" ? "10 6" : null, values: points.map(row => chartValue(key, row.vitals[key])),
         flags: points.map(row => ["attention", "alert"].includes(chartStatus(key, row.vitals))) })) });
   }
+  $("#chart-legend-note").classList.toggle("hidden", !hasPoints);
 }
 function pickCurrent(rows) {
   return rows.find(row => !fromDocument(row)) || null;
@@ -705,6 +709,7 @@ function renderPendingReadings() {
 }
 function renderWeeklyBloodPressure() {
   const panel = $("#weekly-bp-summary"), summary = state.weeklyBP;
+  panel.classList.toggle("hidden", !summary?.morning?.count && !summary?.evening?.count);
   panel.innerHTML = '<h3>Trung bình huyết áp 7 ngày</h3><p class="note">Phân nhóm theo giờ ghi nhận; chỉ để xem xu hướng.</p>' +
     '<div class="weekly-bp-grid">' + [["Sáng (5–12 giờ)", summary?.morning, "Chưa đo buổi sáng"], ["Tối (17–24 giờ)", summary?.evening, "Chưa đo buổi tối"]].map(([label, group, empty]) =>
       '<div class="weekly-bp-card"><strong>' + label + '</strong><b' + (group?.count ? "" : ' class="empty"') + '>' + (group?.count ? esc(num(group.systolic) + "/" + num(group.diastolic) + " mmHg") : empty) + '</b><span class="note">' + (group?.count ? group.count + " lần đo" : "Trong 7 ngày qua") + "</span></div>").join("") + "</div>";
@@ -805,7 +810,7 @@ function renderProfile() {
   $("#profile-content").innerHTML =
     '<article class="panel"><div class="profile-identity">' +
     (state.viewing ? '<span class="avatar large" aria-hidden="true">' + esc(initialOf(h.display_name)) + '</span>' : '<span class="avatar large" data-avatar aria-hidden="true"></span>') +
-    '<div><h2>' + esc(h.display_name) + '</h2><p class="note">' + esc(state.viewing ? "Hồ sơ được chia sẻ, chỉ xem" : state.user.email || "Hồ sơ mẫu") + '</p>' +
+    '<div><h2>' + esc(h.display_name) + '</h2><p class="note">' + esc(state.viewing ? "Hồ sơ được chia sẻ, chỉ xem" : state.user.email || "Tài khoản dùng thử") + '</p>' +
     (state.viewing ? "" : '<div class="avatar-actions"><button type="button" id="avatar-change" class="link-button">Đổi ảnh đại diện</button><button type="button" id="avatar-remove" class="link-button hidden">Xóa ảnh</button></div>') + '</div></div>' +
     '<dl class="facts facts-2col">' +
       "<div><dt>Tuổi</dt><dd>" + p.age + "</dd></div><div><dt>Giới tính</dt><dd>" + sex + "</dd></div>" +
@@ -1208,12 +1213,12 @@ function applyMarkup(analysis) {
   const medicines = analysis.medications || [];
   if (!found.length && !own.length && !family.length && !medicines.length) return '<p class="note">Không thấy chỉ số huyết áp, nhịp tim, đường huyết, thuốc, bệnh đã chẩn đoán hay tiền sử gia đình mới để đưa vào hồ sơ. Nội dung giấy tờ vẫn được lưu.</p>';
   const check = (attribute, label) => '<label class="check-label"><input type="checkbox" ' + attribute + ' checked><span>' + label + "</span></label>";
-  return '<h3>Đưa vào hồ sơ</h3>' +
+  return '<h3>Chọn mục đồng bộ</h3>' +
     (found.length ? '<fieldset class="apply-group"><legend>Chỉ số đo</legend>' + check('id="apply-vitals"', "Thêm vào Lịch sử đo với nguồn “Từ giấy tờ”<small>Số liệu cũ, không đổi tình trạng Hôm nay.</small>") +
       '<div class="field-grid">' + found.map(([key, label, min, max]) => "<label>" + label + '<input type="number" inputmode="decimal" step=".1" min="' + min + '" max="' + max + '" data-apply-vital="' + key + '" value="' + esc(vitals[key] == null ? "" : Math.round(vitals[key] * 10) / 10) + '"></label>').join("") +
       '<label>Ngày ghi trên giấy tờ<input type="date" id="apply-date" required min="1950-01-01" max="' + new Date().toLocaleDateString("sv") + '" value="' + esc(analysis.document_date || "") + '"></label></div></fieldset>' : "") +
-    (own.length ? '<fieldset class="apply-group"><legend>Bệnh đã được chẩn đoán</legend>' + own.map(key => check('data-apply-own="' + esc(key) + '"', esc(name(key)))).join("") + "</fieldset>" : "") +
-    (family.length ? '<fieldset class="apply-group"><legend>Tiền sử gia đình</legend>' + family.map(item => check('data-apply-family="' + esc(item.member + "|" + item.condition) + '"', esc(MEMBERS.find(m => m.id === item.member).label + ": " + name(item.condition)))).join("") + "</fieldset>" : "") +
+    (own.length ? '<fieldset class="apply-group"><legend>Bệnh sử · Hồ sơ</legend>' + own.map(key => check('data-apply-own="' + esc(key) + '"', esc(name(key)))).join("") + "</fieldset>" : "") +
+    (family.length ? '<fieldset class="apply-group"><legend>Tiền sử gia đình · Di truyền</legend>' + family.map(item => check('data-apply-family="' + esc(item.member + "|" + item.condition) + '"', esc(MEMBERS.find(m => m.id === item.member).label + ": " + name(item.condition)))).join("") + "</fieldset>" : "") +
     (medicines.length ? '<fieldset class="apply-group"><legend>Thuốc trong đơn</legend><p class="note">So từng thuốc với đơn giấy.</p>' + medicines.map(applyMedicineMarkup).join("") + "</fieldset>" : "");
 }
 // One card per medicine read from a prescription. A name the AI was not sure of starts unticked, so it cannot be saved unseen.
@@ -1440,7 +1445,7 @@ async function applyDocument(vitals) {
   }
   if (form.querySelector("[data-saved]")) await refreshMedications();
   if (vitals) {
-    await api.assess({ vitals, source: "document", measured_on: $("#apply-date").value });
+    await api.assess({ vitals, source: "document", measured_on: $("#apply-date").value, client_id: state.pendingMedical.savedRecordId });
     await refreshRecords();
   }
 }
@@ -1484,9 +1489,10 @@ function updateDocumentButton() {
   $("#analyze-document").disabled = !state.documentAiEnabled || !state.uploadFile || !$("#document-ai-consent").checked || state.busy;
 }
 
-function openMedicalUpload() {
+function openMedicalUpload({ fromDashboard = false } = {}) {
   if (state.viewing) return;
   resetMedicalUpload();
+  state.documentUploadFromDashboard = fromDashboard;
   openDialog($("#medical-upload-dialog"));
 }
 
@@ -1576,14 +1582,16 @@ async function saveMedicalRecord() {
   try {
     const saved = await api.saveMedicalRecord({ analysis: state.pendingMedical.analysis, document_hash: state.pendingMedical.document_hash, health_consent: true });
     if (epoch !== state.authEpoch) return;
+    state.pendingMedical.savedRecordId = saved.id;
     state.medicalRecords = [saved, ...state.medicalRecords.filter(record => record.id !== saved.id)];
     if (state.pendingScan) await scanRequest("readwrite", store => store.put(state.pendingScan, saved.id));
     renderMedicalRecords(); // the document is saved from here on, even if a later step fails
     await applyDocument(vitals);
     closeDialog($("#medical-upload-dialog"));
-    navigate("records");
-    toast("Đã lưu giấy tờ.");
-  } catch (error) { errorAt("#record-save-error", error.message); }
+    personalize();
+    navigate(state.documentUploadFromDashboard ? "dashboard" : "records");
+    toast("Đã lưu giấy tờ và cập nhật các mục đã chọn.");
+  } catch (error) { errorAt("#record-save-error", (state.pendingMedical?.savedRecordId ? "Giấy tờ đã lưu. Chưa đồng bộ xong: " : "") + error.message); }
   finally { state.busy = false; button.innerHTML = original; button.disabled = !$("#confirm-medical-record").checked; }
 }
 
@@ -2192,6 +2200,99 @@ async function submitManual(event) {
   }
   await saveMeasurement(values, "manual", [], takenAt);
 }
+function renderAssistantSources() {
+  const counts = [
+    ["Hồ sơ", state.health ? 1 : 0],
+    ["Tiền sử gia đình", state.health?.family_history?.length || 0],
+    ["Lần đo", Math.min(10, state.records.length)],
+    ["Giấy tờ", Math.min(5, state.medicalRecords.length)],
+    ["Thuốc", Math.min(30, state.medications.length)],
+  ];
+  $("#assistant-sources").innerHTML = counts.map(([label, count]) =>
+    `<span class="assistant-source"><strong>${count}</strong>${esc(label)}</span>`
+  ).join("");
+}
+function updateAssistantAvailability() {
+  const demo = Boolean(state.user?.is_demo);
+  const enabled = state.documentAiEnabled && !demo;
+  $("#assistant-unavailable").textContent = demo
+    ? "Trợ lý AI không chạy với hồ sơ mẫu. Hãy đăng nhập tài khoản của bạn để dùng tính năng này."
+    : "Trợ lý AI chưa được cấu hình trên bản web này. Hồ sơ của bạn vẫn được lưu bình thường.";
+  $("#assistant-unavailable").classList.toggle("hidden", enabled);
+  $("#assistant-run").disabled = !enabled;
+}
+function renderAssistantResult(result, createdAt = null) {
+  const findings = result.findings || [];
+  const missing = result.missing_data || [];
+  $("#assistant-result").innerHTML =
+    `<div class="panel-heading"><h2>Tóm tắt</h2>${createdAt ? `<small>${esc(date(createdAt))}</small>` : ""}</div>` +
+    `<p class="assistant-summary">${esc(result.summary)}</p>` +
+    (findings.length ? `<div class="assistant-findings">${findings.map(item =>
+      `<article class="assistant-finding"><h3>${esc(item.topic)}</h3><p>${esc(item.interpretation)}</p><p class="assistant-next"><strong>Nên làm:</strong> ${esc(item.next_step)}</p><details class="assistant-evidence"><summary>Xem căn cứ</summary><p>${esc(item.evidence)}</p></details></article>`
+    ).join("")}</div>` : "") +
+    (missing.length ? `<div class="assistant-missing"><h3>Cần bổ sung</h3><ul>${missing.map(item => `<li>${esc(item)}</li>`).join("")}</ul></div>` : "") +
+    `<p class="note assistant-disclaimer">${esc(result.disclaimer)}</p>`;
+  if (state.view === "assistant") $("#assistant-result").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function renderAssistantHistory() {
+  $("#assistant-history").innerHTML = state.assistantHistory.length
+    ? state.assistantHistory.map(item =>
+      `<div class="assistant-history-row"><button class="assistant-history-item" type="button" data-assistant-history="${esc(item.id)}"><span>${esc(date(item.created_at))}</span><strong>${esc(item.result.summary)}</strong></button><button type="button" class="link-button assistant-history-delete" data-assistant-delete="${esc(item.id)}" aria-label="Xóa bản phân tích ngày ${esc(date(item.created_at))}">Xóa</button></div>`
+    ).join("")
+    : '<p class="note">Chưa có bản phân tích.</p>';
+}
+async function refreshAssistantHistory() {
+  const epoch = state.authEpoch;
+  try {
+    const rows = await api.clinicalReviews();
+    if (epoch !== state.authEpoch) return;
+    state.assistantHistory = rows;
+    renderAssistantHistory();
+  } catch (error) {
+    if (epoch === state.authEpoch) $("#assistant-history").innerHTML = `<p class="note">${esc(error.message)}</p>`;
+  }
+}
+async function deleteAssistantReview(id) {
+  if (!await confirmAction("Xóa bản phân tích?", "Bản phân tích này sẽ bị xóa khỏi lịch sử.", "Xóa")) return;
+  try {
+    await api.deleteClinicalReview(id);
+    if (state.assistantSelectedId === id) {
+      state.assistantSelectedId = null;
+      $("#assistant-result").innerHTML = '<h2>Kết quả</h2><p class="note">Chọn nội dung rồi nhấn Phân tích hồ sơ.</p>';
+    }
+    await refreshAssistantHistory();
+  } catch (error) { toast(error.message, "error"); }
+}
+async function runAssistant(event) {
+  event.preventDefault();
+  if (state.assistantBusy || !state.documentAiEnabled || state.user?.is_demo) return;
+  if (!$("#assistant-consent").checked) {
+    errorAt("#assistant-error", "Hãy đồng ý gửi dữ liệu cho lần phân tích này.");
+    $("#assistant-consent").focus();
+    return;
+  }
+  errorAt("#assistant-error");
+  const epoch = state.authEpoch;
+  state.assistantBusy = true;
+  $("#assistant-run").disabled = true;
+  $("#assistant-run").textContent = "Đang phân tích…";
+  try {
+    const result = await api.clinicalReview({ consent: true, focus: $("#assistant-focus").value, question: $("#assistant-question").value.trim() });
+    if (epoch !== state.authEpoch) return;
+    state.assistantSelectedId = null;
+    renderAssistantResult(result, new Date().toISOString());
+    $("#assistant-consent").checked = false;
+    await refreshAssistantHistory();
+  } catch (error) {
+    if (epoch === state.authEpoch) errorAt("#assistant-error", error.message);
+  } finally {
+    if (epoch === state.authEpoch) {
+      state.assistantBusy = false;
+      $("#assistant-run").disabled = !state.documentAiEnabled || Boolean(state.user?.is_demo);
+      $("#assistant-run").textContent = "Phân tích hồ sơ";
+    }
+  }
+}
 function clearAccount() {
   state.authEpoch++;
   stopStreams();
@@ -2203,10 +2304,13 @@ function clearAccount() {
   state.scanUrl = null; $("#scan-image").removeAttribute("src"); $("#scan-save").removeAttribute("href");
   reportLayer = false;
   state.devices = null;
-  state.user = null; state.health = null; state.records = []; state.result = null; state.risk = null; state.weeklyBP = null; state.riskFailed = false; state.medicalRecords = []; state.medications = []; state.medicationIntakes = null; state.pendingAssessments = []; state.viewingMedications = null; state.recordsTab = null; state.historyAll = false; state.editing = false; state.rating = 0;
+  state.user = null; state.health = null; state.records = []; state.result = null; state.risk = null; state.weeklyBP = null; state.riskFailed = false; state.medicalRecords = []; state.medications = []; state.medicationIntakes = null; state.assistantHistory = []; state.assistantSelectedId = null; state.assistantBusy = false; state.pendingAssessments = []; state.viewingMedications = null; state.recordsTab = null; state.historyAll = false; state.editing = false; state.rating = 0;
   renderSyncStatus();
   resetMedicalUpload();
   $("#profile-content").innerHTML = ""; $("#genetics-content").innerHTML = ""; $("#history-list").innerHTML = ""; $("#medical-record-list").innerHTML = ""; $("#result-detail").innerHTML = "";
+  $("#assistant-result").innerHTML = '<h2>Kết quả</h2><p class="note">Chọn nội dung rồi nhấn Phân tích hồ sơ.</p>';
+  $("#assistant-history").innerHTML = '<p class="note">Chưa có bản phân tích.</p>';
+  $("#assistant-form").reset();
   $("#onboarding-form").reset(); $("#measurement-form").reset(); $("#feedback-form").reset();
   $("#toast-region").innerHTML = "";
 }
@@ -2250,6 +2354,7 @@ async function enterAccount(user) {
     state.editing = false; fillWizard(); screen("onboarding");
   } else {
     personalize(); screen("app");
+    updateAssistantAvailability();
     loadAvatar();
     await Promise.all([refreshRecords(), refreshMedicalRecords(), refreshMedications(), refreshCare(), refreshRisk(), refreshDevices()]);
     navigate(location.hash.slice(1) || "dashboard");
@@ -2265,6 +2370,8 @@ async function boot() {
     const config = await api.authConfig();
     state.documentAiEnabled = Boolean(config.document_ai_enabled);
     state.aiProvider = config.ai_provider || "AI";
+    $("#assistant-provider").textContent = state.aiProvider;
+    updateAssistantAvailability();
     $("#document-ai-provider").textContent = state.aiProvider;
     $("#upload-record").disabled = false;
     $("#records-ai-off").classList.toggle("hidden", state.documentAiEnabled);
@@ -2280,6 +2387,7 @@ async function boot() {
     if (user) await enterAccount(user);
     else {
       screen("login");
+      void resumeGoogleLogin(message => errorAt("#login-message", message));
       if (!loginError) { offerDeviceImport(); void offerDevicePair(); }
     }
   } catch (error) {
@@ -2294,6 +2402,15 @@ function applyGlass(on) {
   $("#glass-setting").checked = on;
 }
 function bindEvents() {
+  $("#assistant-form").addEventListener("submit", runAssistant);
+  $("#assistant-history").addEventListener("click", event => {
+    const remove = event.target.closest("[data-assistant-delete]");
+    if (remove) { void deleteAssistantReview(remove.dataset.assistantDelete); return; }
+    const button = event.target.closest("[data-assistant-history]");
+    if (!button) return;
+    const item = state.assistantHistory.find(row => row.id === button.dataset.assistantHistory);
+    if (item) { state.assistantSelectedId = item.id; renderAssistantResult(item.result, item.created_at); }
+  });
   $("#glass-setting").addEventListener("change", event => {
     applyGlass(event.target.checked);
     try { localStorage.setItem("genesense-glass", event.target.checked ? "on" : "off"); } catch {}
@@ -2324,7 +2441,7 @@ function bindEvents() {
       first.focus({ preventScroll: true });
     }
   });
-  $("#google-login").addEventListener("click", () => { location.assign("/api/auth/google"); });
+  $("#google-login").addEventListener("click", () => { void loginWithGoogle(message => errorAt("#login-message", message)); });
   $("#demo-login").addEventListener("click", async () => {
     const button = $("#demo-login"); button.disabled = true;
     try { await enterAccount(await api.demo()); accountChannel?.postMessage("account-changed"); }
@@ -2435,6 +2552,7 @@ function bindEvents() {
   $("#delete-assessment").addEventListener("click", event => deleteAssessment(event.currentTarget.dataset.id));
   $("#new-measurement").addEventListener("click", () => openMeasurement());
   $("#upload-record").addEventListener("click", openMedicalUpload);
+  $("#today-document-upload").addEventListener("click", () => openMedicalUpload({ fromDashboard: true }));
   $("#add-medicine").addEventListener("click", () => openMedicine());
   $("#medicine-form").addEventListener("submit", saveMedicine);
   $("#care-panel").addEventListener("change", event => {

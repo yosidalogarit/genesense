@@ -107,6 +107,39 @@ class AIInsight(BaseModel):
     source: Literal["ai", "rules"] = "rules"
 
 
+class ClinicalReviewRequest(BaseModel):
+    consent: Literal[True]
+    focus: Literal["overview", "family", "readings", "documents", "medications"] = "overview"
+    question: str = Field(default="", max_length=500)
+
+
+class ClinicalReviewFinding(BaseModel):
+    topic: str = Field(min_length=1, max_length=100)
+    evidence: str = Field(min_length=1, max_length=320)
+    interpretation: str = Field(min_length=1, max_length=320)
+    next_step: str = Field(min_length=1, max_length=260)
+
+
+class ClinicalReviewSource(BaseModel):
+    label: str
+    count: int = Field(ge=0)
+
+
+class ClinicalReviewResult(BaseModel):
+    summary: str = Field(min_length=1, max_length=400)
+    findings: list[ClinicalReviewFinding] = Field(default_factory=list, max_length=5)
+    missing_data: list[str] = Field(default_factory=list, max_length=5)
+    sources: list[ClinicalReviewSource] = Field(default_factory=list)
+    source: Literal["ai"] = "ai"
+    disclaimer: str = "AI chỉ đối chiếu thông tin đã cung cấp; không xác nhận hoặc loại trừ bệnh."
+
+
+class ClinicalReviewHistoryItem(BaseModel):
+    id: str
+    created_at: datetime
+    result: ClinicalReviewResult
+
+
 class AssessmentResult(BaseModel):
     id: str | None = None
     created_at: datetime
@@ -186,8 +219,8 @@ class MeasurementCreate(BaseModel):
     @model_validator(mode="after")
     def require_measurement(self):
         # Manual readings use the id to sync once; device links use it so tapping the same link twice saves once.
-        if self.client_id and self.source not in {"manual", "device"}:
-            raise ValueError("Mã chống lưu trùng chỉ dùng cho chỉ số nhập tay hoặc từ máy đo GeneSense.")
+        if self.client_id and self.source not in {"manual", "device", "document"}:
+            raise ValueError("Mã chống lưu trùng chỉ dùng cho chỉ số nhập tay, giấy tờ hoặc máy đo GeneSense.")
         if self.vitals.timestamp is not None:
             if self.vitals.timestamp.tzinfo is None:
                 raise ValueError("Thời gian ghi nhận cần có múi giờ.")

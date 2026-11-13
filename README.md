@@ -199,6 +199,14 @@ AI chỉ diễn giải kết quả đã khóa. Nếu thiếu API key, người d
 
 ## Bật trợ lý Google Gemini
 
+### Trợ lý AI tổng hợp hồ sơ
+
+Trong tài khoản thật, mở **Trợ lý AI** từ menu hoặc trang **Hôm nay**. Trợ lý đối chiếu hồ sơ cá nhân, tiền sử gia đình, tối đa 10 lần đo mới nhất, 5 giấy tờ đã lưu và 30 thuốc trong lịch. Người dùng chọn chủ đề, có thể đặt câu hỏi và phải đồng ý cho từng lần gửi dữ liệu. Ảnh giấy tờ gốc và các trường tên tài khoản, email không được đưa trực tiếp vào yêu cầu tổng hợp; văn bản tự do hoặc nội dung đọc từ ảnh vẫn có thể chứa thông tin định danh. Kết quả nêu căn cứ, điều cần kiểm tra thêm và gợi ý câu hỏi cho bác sĩ; không xác nhận bệnh hoặc thay đổi đơn thuốc. Mỗi bản phân tích được lưu trong tài khoản và có thể xóa ở phần lịch sử.
+
+Tài khoản dùng thử không gọi AI. Khi chưa cấu hình API key, trang trợ lý vẫn cho xem dữ liệu sẽ dùng nhưng không cho chạy phân tích. Xem `.env.example` để cấu hình Gemini hoặc OpenAI ở backend.
+
+Xem [AI_HANDOFF.md](AI_HANDOFF.md) để bàn giao luồng dữ liệu, API, kiểm thử và giới hạn của tính năng.
+
 Chỉ đặt khóa ở file `.env` phía backend; không chèn vào HTML/JavaScript và không gửi `.env` cho người khác:
 
 ```dotenv
