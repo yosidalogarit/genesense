@@ -219,8 +219,8 @@ class MeasurementCreate(BaseModel):
     @model_validator(mode="after")
     def require_measurement(self):
         # Manual readings use the id to sync once; device links use it so tapping the same link twice saves once.
-        if self.client_id and self.source not in {"manual", "device"}:
-            raise ValueError("Mã chống lưu trùng chỉ dùng cho chỉ số nhập tay hoặc từ máy đo GeneSense.")
+        if self.client_id and self.source not in {"manual", "device", "document"}:
+            raise ValueError("Mã chống lưu trùng chỉ dùng cho chỉ số nhập tay, giấy tờ hoặc máy đo GeneSense.")
         if self.vitals.timestamp is not None:
             if self.vitals.timestamp.tzinfo is None:
                 raise ValueError("Thời gian ghi nhận cần có múi giờ.")

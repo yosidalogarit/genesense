@@ -155,7 +155,10 @@
         </article>
         </div>
 
-        <button class="assistant-entry panel own-only" type="button" data-nav="assistant"><span class="assistant-entry-icon" data-icon="heart"></span><span><strong>Trợ lý AI</strong><small>Đối chiếu thông tin trong hồ sơ của bạn</small></span><span data-icon="chevron"></span></button>
+        <div class="dashboard-actions own-only">
+          <button class="assistant-entry document-entry panel" id="today-document-upload" type="button"><span class="assistant-entry-icon" data-icon="scan"></span><span><strong>Phân tích giấy khám</strong><small>Chụp ảnh để cập nhật chỉ số, bệnh sử và thuốc</small></span><span data-icon="chevron"></span></button>
+          <button class="assistant-entry panel" type="button" data-nav="assistant"><span class="assistant-entry-icon" data-icon="heart"></span><span><strong>Trợ lý AI</strong><small>Đối chiếu thông tin trong hồ sơ của bạn</small></span><span data-icon="chevron"></span></button>
+        </div>
         </div>
 
         <section class="section" aria-labelledby="latest-title">
@@ -301,7 +304,7 @@
       <label class="check-label upload-consent"><input id="document-ai-consent" type="checkbox"><span>Tôi đồng ý gửi ảnh này đến <strong id="document-ai-provider">Google Gemini</strong> để đọc nội dung.<small>AI có thể dùng ảnh để cải thiện dịch vụ. Nên che họ tên và mã số.</small></span></label>
       <p id="document-error" class="inline-message error hidden" role="alert"></p><button id="analyze-document" class="btn primary full-width" disabled>Phân tích và tổng hợp</button>
     </div>
-    <div id="review-stage" class="hidden"><h3>Kiểm tra trước khi lưu</h3><p class="note">AI có thể đọc sai. Hãy so với giấy gốc.</p><div id="document-analysis-preview"></div><form id="document-apply" class="document-apply"></form><label class="check-label confirm-record"><input id="confirm-medical-record" type="checkbox"><span>Tôi đã kiểm tra và muốn lưu nội dung này.</span></label><p id="record-save-error" class="inline-message error hidden" role="alert"></p><div class="dialog-actions"><button id="analyze-another" class="btn outline">Chọn ảnh khác</button><button id="save-medical-record" class="btn primary" disabled>Lưu vào hồ sơ</button></div></div>
+    <div id="review-stage" class="hidden"><h3>Kiểm tra và đồng bộ</h3><p class="note">So với giấy gốc, sửa và chọn các mục muốn cập nhật.</p><div id="document-analysis-preview"></div><form id="document-apply" class="document-apply"></form><label class="check-label confirm-record"><input id="confirm-medical-record" type="checkbox"><span>Tôi đã kiểm tra và muốn lưu nội dung này.</span></label><p id="record-save-error" class="inline-message error hidden" role="alert"></p><div class="dialog-actions"><button id="analyze-another" class="btn outline">Chọn ảnh khác</button><button id="save-medical-record" class="btn primary" disabled>Lưu và đồng bộ</button></div></div>
   </dialog>
   <section id="report-screen" class="report-screen hidden" aria-labelledby="report-title">
     <div class="report-toolbar"><button class="btn outline" id="report-back">Quay lại</button><label class="inline-select">Kỳ báo cáo<select id="report-days"><option value="7">7 ngày</option><option value="30" selected>30 ngày</option><option value="90">90 ngày</option></select></label><button class="btn primary" id="report-print">In / Lưu PDF</button></div>

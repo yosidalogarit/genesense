@@ -362,6 +362,21 @@ def test_expired_sessions_rejected(client):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_document_sync_retry_keeps_one_historical_reading(client):
+    login(client)
+    assert client.put("/api/profile", json=PROFILE).status_code == 200
+    body = {"vitals": {"systolic": 146, "diastolic": 94}, "source": "document",
+            "measured_on": "2024-03-15", "client_id": str(uuid4())}
+    first = client.post("/api/assessments", json=body)
+    retry = client.post("/api/assessments", json=body)
+    assert first.status_code == retry.status_code == 201
+    assert first.json()["id"] == retry.json()["id"]
+    rows = client.get("/api/assessments").json()
+    assert len(rows) == 1
+    assert rows[0]["vitals"]["source"] == "document"
+    assert rows[0]["created_at"].startswith("2024-03-15")
+
+
 def test_google_callback_creates_one_account_and_remembers_onboarding(client, monkeypatch):
     monkeypatch.setattr(auth.settings, "google_client_id", "synthetic-client")
     monkeypatch.setattr(auth.settings, "google_client_secret", "synthetic-secret")

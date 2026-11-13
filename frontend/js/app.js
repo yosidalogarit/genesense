@@ -1213,12 +1213,12 @@ function applyMarkup(analysis) {
   const medicines = analysis.medications || [];
   if (!found.length && !own.length && !family.length && !medicines.length) return '<p class="note">Không thấy chỉ số huyết áp, nhịp tim, đường huyết, thuốc, bệnh đã chẩn đoán hay tiền sử gia đình mới để đưa vào hồ sơ. Nội dung giấy tờ vẫn được lưu.</p>';
   const check = (attribute, label) => '<label class="check-label"><input type="checkbox" ' + attribute + ' checked><span>' + label + "</span></label>";
-  return '<h3>Đưa vào hồ sơ</h3>' +
+  return '<h3>Chọn mục đồng bộ</h3>' +
     (found.length ? '<fieldset class="apply-group"><legend>Chỉ số đo</legend>' + check('id="apply-vitals"', "Thêm vào Lịch sử đo với nguồn “Từ giấy tờ”<small>Số liệu cũ, không đổi tình trạng Hôm nay.</small>") +
       '<div class="field-grid">' + found.map(([key, label, min, max]) => "<label>" + label + '<input type="number" inputmode="decimal" step=".1" min="' + min + '" max="' + max + '" data-apply-vital="' + key + '" value="' + esc(vitals[key] == null ? "" : Math.round(vitals[key] * 10) / 10) + '"></label>').join("") +
       '<label>Ngày ghi trên giấy tờ<input type="date" id="apply-date" required min="1950-01-01" max="' + new Date().toLocaleDateString("sv") + '" value="' + esc(analysis.document_date || "") + '"></label></div></fieldset>' : "") +
-    (own.length ? '<fieldset class="apply-group"><legend>Bệnh đã được chẩn đoán</legend>' + own.map(key => check('data-apply-own="' + esc(key) + '"', esc(name(key)))).join("") + "</fieldset>" : "") +
-    (family.length ? '<fieldset class="apply-group"><legend>Tiền sử gia đình</legend>' + family.map(item => check('data-apply-family="' + esc(item.member + "|" + item.condition) + '"', esc(MEMBERS.find(m => m.id === item.member).label + ": " + name(item.condition)))).join("") + "</fieldset>" : "") +
+    (own.length ? '<fieldset class="apply-group"><legend>Bệnh sử · Hồ sơ</legend>' + own.map(key => check('data-apply-own="' + esc(key) + '"', esc(name(key)))).join("") + "</fieldset>" : "") +
+    (family.length ? '<fieldset class="apply-group"><legend>Tiền sử gia đình · Di truyền</legend>' + family.map(item => check('data-apply-family="' + esc(item.member + "|" + item.condition) + '"', esc(MEMBERS.find(m => m.id === item.member).label + ": " + name(item.condition)))).join("") + "</fieldset>" : "") +
     (medicines.length ? '<fieldset class="apply-group"><legend>Thuốc trong đơn</legend><p class="note">So từng thuốc với đơn giấy.</p>' + medicines.map(applyMedicineMarkup).join("") + "</fieldset>" : "");
 }
 // One card per medicine read from a prescription. A name the AI was not sure of starts unticked, so it cannot be saved unseen.
@@ -1445,7 +1445,7 @@ async function applyDocument(vitals) {
   }
   if (form.querySelector("[data-saved]")) await refreshMedications();
   if (vitals) {
-    await api.assess({ vitals, source: "document", measured_on: $("#apply-date").value });
+    await api.assess({ vitals, source: "document", measured_on: $("#apply-date").value, client_id: state.pendingMedical.savedRecordId });
     await refreshRecords();
   }
 }
@@ -1489,9 +1489,10 @@ function updateDocumentButton() {
   $("#analyze-document").disabled = !state.documentAiEnabled || !state.uploadFile || !$("#document-ai-consent").checked || state.busy;
 }
 
-function openMedicalUpload() {
+function openMedicalUpload({ fromDashboard = false } = {}) {
   if (state.viewing) return;
   resetMedicalUpload();
+  state.documentUploadFromDashboard = fromDashboard;
   openDialog($("#medical-upload-dialog"));
 }
 
@@ -1581,14 +1582,16 @@ async function saveMedicalRecord() {
   try {
     const saved = await api.saveMedicalRecord({ analysis: state.pendingMedical.analysis, document_hash: state.pendingMedical.document_hash, health_consent: true });
     if (epoch !== state.authEpoch) return;
+    state.pendingMedical.savedRecordId = saved.id;
     state.medicalRecords = [saved, ...state.medicalRecords.filter(record => record.id !== saved.id)];
     if (state.pendingScan) await scanRequest("readwrite", store => store.put(state.pendingScan, saved.id));
     renderMedicalRecords(); // the document is saved from here on, even if a later step fails
     await applyDocument(vitals);
     closeDialog($("#medical-upload-dialog"));
-    navigate("records");
-    toast("Đã lưu giấy tờ.");
-  } catch (error) { errorAt("#record-save-error", error.message); }
+    personalize();
+    navigate(state.documentUploadFromDashboard ? "dashboard" : "records");
+    toast("Đã lưu giấy tờ và cập nhật các mục đã chọn.");
+  } catch (error) { errorAt("#record-save-error", (state.pendingMedical?.savedRecordId ? "Giấy tờ đã lưu. Chưa đồng bộ xong: " : "") + error.message); }
   finally { state.busy = false; button.innerHTML = original; button.disabled = !$("#confirm-medical-record").checked; }
 }
 
@@ -2549,6 +2552,7 @@ function bindEvents() {
   $("#delete-assessment").addEventListener("click", event => deleteAssessment(event.currentTarget.dataset.id));
   $("#new-measurement").addEventListener("click", () => openMeasurement());
   $("#upload-record").addEventListener("click", openMedicalUpload);
+  $("#today-document-upload").addEventListener("click", () => openMedicalUpload({ fromDashboard: true }));
   $("#add-medicine").addEventListener("click", () => openMedicine());
   $("#medicine-form").addEventListener("submit", saveMedicine);
   $("#care-panel").addEventListener("change", event => {
