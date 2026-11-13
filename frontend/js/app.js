@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { loginWithGoogle, resumeGoogleLogin } from "./google-login.js";
 import { HealthBleClient, VitalSimulator } from "./ble.js";
 import { TrendChart } from "./chart.js";
 import { hydrateIcons, icon } from "./icons.js";
@@ -2383,6 +2384,7 @@ async function boot() {
     if (user) await enterAccount(user);
     else {
       screen("login");
+      void resumeGoogleLogin(message => errorAt("#login-message", message));
       if (!loginError) { offerDeviceImport(); void offerDevicePair(); }
     }
   } catch (error) {
@@ -2436,7 +2438,7 @@ function bindEvents() {
       first.focus({ preventScroll: true });
     }
   });
-  $("#google-login").addEventListener("click", () => { location.assign("/api/auth/google"); });
+  $("#google-login").addEventListener("click", () => { void loginWithGoogle(message => errorAt("#login-message", message)); });
   $("#demo-login").addEventListener("click", async () => {
     const button = $("#demo-login"); button.disabled = true;
     try { await enterAccount(await api.demo()); accountChannel?.postMessage("account-changed"); }

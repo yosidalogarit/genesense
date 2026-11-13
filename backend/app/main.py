@@ -24,6 +24,7 @@ from .config import get_settings
 from .devices import current_device, router as devices_router
 from .database import engine, get_session
 from .migrations import migrate_schema
+from .mobile_auth import router as mobile_auth_router
 from .models import Assessment, Avatar, ClinicalReview, Device, Feedback, MedicalRecord, Medication, MedicationIntake, User
 from .schemas import (AccountProfile, AssessmentCreate, AssessmentHistoryItem, AssessmentResult,
                       ClinicalReviewHistoryItem, ClinicalReviewRequest, ClinicalReviewResult, ClinicalReviewSource,
@@ -119,6 +120,7 @@ async def privacy_and_csrf(request: Request, call_next):
 
 
 app.include_router(auth_router)
+app.include_router(mobile_auth_router)
 app.include_router(care_router)
 app.include_router(devices_router)
 

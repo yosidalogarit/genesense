@@ -245,7 +245,9 @@ def test_profile_validation_and_partial_measurements(client):
     # Blood sugar keeps when it was measured; the context is dropped when there is no blood sugar.
     fasting = client.post("/api/assessments", json={"vitals": {"glucose": 110, "glucose_context": "fasting"}})
     assert fasting.json()["measured_vitals"]["glucose_context"] == "fasting"
-    assert client.get("/api/assessments").json()[0]["vitals"]["glucose_context"] == "fasting"
+    # Multiple readings can share the clock's timestamp resolution on Windows.
+    saved = next(row for row in client.get("/api/assessments").json() if row["id"] == fasting.json()["id"])
+    assert saved["vitals"]["glucose_context"] == "fasting"
     alone = client.post("/api/assessments", json={"vitals": {"heart_rate": 70, "glucose_context": "after_meal"}})
     assert alone.json()["measured_vitals"]["glucose_context"] is None
     assert client.post("/api/assessments", json={"vitals": {"glucose": 110, "glucose_context": "bedtime"}}).status_code == 422
