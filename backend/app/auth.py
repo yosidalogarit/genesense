@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,13 +122,8 @@ async def google_callback(request: Request, session: AsyncSession = Depends(get_
         if not user.onboarding_completed and claims.get("name"):
             user.display_name = claims["name"][:100]
     if mobile_id:
-        await session.execute(update(AppLoginAttempt).where(
-            AppLoginAttempt.id == mobile_id, AppLoginAttempt.user_id.is_(None),
-            AppLoginAttempt.expires_at > datetime.now(timezone.utc)
-        ).values(user_id=user.id))
-        await session.commit()
-        from .mobile_auth import completed_page
-        return completed_page()
+        from .mobile_auth import finish
+        return await finish(session, mobile_id, user)
     response = RedirectResponse("/", status_code=303)
     return await issue_session(request, response, user, session)
 

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
@@ -36,6 +36,7 @@ from .services.ai_service import AIInsightService
 from .services.ai_service import AIServiceError
 from .services.risk_engine import calculate_risk, risk_overview
 
+CLINICAL_REVIEWS_PER_HOUR = 10
 ROOT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT_DIR / "frontend"
 settings = get_settings()
@@ -194,6 +195,11 @@ async def clinical_review(
         raise HTTPException(403, "Trợ lý AI chỉ dùng với tài khoản của bạn, không dùng với hồ sơ mẫu.")
     if not ai_service.available:
         raise HTTPException(503, "Trợ lý AI chưa khả dụng trên bản này.")
+    # Each review is a paid AI call: a few per hour per account is plenty for real use.
+    recent = await session.scalar(select(func.count()).select_from(ClinicalReview).where(
+        ClinicalReview.user_id == user.id, ClinicalReview.created_at >= datetime.now(timezone.utc) - timedelta(hours=1)))
+    if recent >= CLINICAL_REVIEWS_PER_HOUR:
+        raise HTTPException(429, "Bạn đã dùng trợ lý AI nhiều lần trong giờ này. Hãy thử lại sau ít phút.")
 
     profile = AccountProfile.model_validate(user.health_profile)
     readings = (await session.scalars(select(Assessment).where(Assessment.user_id == user.id)

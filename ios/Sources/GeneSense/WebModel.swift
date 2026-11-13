@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 import VisionKit
 import WebKit
@@ -5,7 +6,8 @@ import WebKit
 /// Owns the web view that shows https://genesense-five.vercel.app and the bridge the page talks to.
 ///
 /// Page to app: `window.gsNative.scan()` (document scanner, resolves to a JPEG Blob or null),
-/// `window.gsNative.scanQR()` (device QR code, resolves to its text or null) and `window.print()`.
+/// `window.gsNative.scanQR()` (device QR code, resolves to its text or null),
+/// `window.gsNative.authSession(url)` (Google sign-in sheet, resolves to the genesense:// link or null) and `window.print()`.
 /// Everything else is the normal web app; the page knows it runs here by the `ios-app` class on <html>.
 @MainActor
 final class WebModel: NSObject, ObservableObject {
@@ -16,12 +18,13 @@ final class WebModel: NSObject, ObservableObject {
     let webView: WKWebView
     let ble = Bluetooth()
     private var scanner: Scanner?
+    private var signIn: ASWebAuthenticationSession?
     private var downloads: [ObjectIdentifier: URL] = [:]
 
     override init() {
         let config = WKWebViewConfiguration()
         config.limitsNavigationsToAppBoundDomains = true
-        config.applicationNameForUserAgent = "GeneSenseiOS/1.2"   // 1.1: inline camera video; 1.2: native QR scanner (gsNative.scanQR)
+        config.applicationNameForUserAgent = "GeneSenseiOS/1.3"   // 1.1: inline camera video; 1.2: native QR scanner; 1.3: Google sign-in sheet
         config.allowsInlineMediaPlayback = true      // the QR scanner's camera view plays inside the page
         let scripts = WKUserContentController()
         scripts.addUserScript(WKUserScript(source: Self.bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -64,14 +67,29 @@ final class WebModel: NSObject, ObservableObject {
     }
 
     private func scanQR(id: Int) {
-        guard let top = topController() else { return finishQR(id, nil) }
-        top.present(QRScanner { [weak self] text in self?.finishQR(id, text) }, animated: true)
+        guard let top = topController() else { return resolveText(id, nil) }
+        top.present(QRScanner { [weak self] text in self?.resolveText(id, text) }, animated: true)
     }
 
-    private func finishQR(_ id: Int, _ text: String?) {
+    private func resolveText(_ id: Int, _ text: String?) {
         let value = text.flatMap { try? JSONSerialization.data(withJSONObject: $0, options: .fragmentsAllowed) }
             .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         webView.evaluateJavaScript("window.gsNative._resolve(\(id), \(value))", completionHandler: nil)
+    }
+
+    /// Google refuses sign-in inside a web view, so it runs in Apple's sign-in sheet. The sheet closes when the server
+    /// sends it to genesense://auth?..., and that link (a one-time code) goes back to the page.
+    private func authSession(id: Int, url: String) {
+        guard let start = URL(string: url), start.host == Self.home.host else { return resolveText(id, nil) }
+        let session = ASWebAuthenticationSession(url: start, callbackURLScheme: "genesense") { [weak self] back, _ in
+            DispatchQueue.main.async {
+                self?.signIn = nil
+                self?.resolveText(id, back?.absoluteString)
+            }
+        }
+        session.presentationContextProvider = self
+        signIn = session
+        if !session.start() { signIn = nil; resolveText(id, nil) }
     }
 
     private func finishScan(_ id: Int, _ jpeg: Data?) {
@@ -107,6 +125,8 @@ final class WebModel: NSObject, ObservableObject {
         scan: () => call("scan").then(base64 => base64 ? new Blob([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], { type: "image/jpeg" }) : null),
         // scanQR() resolves to the QR code's text (or a typed code), or null when closed.
         scanQR: () => call("scanQR"),
+        // authSession(url) opens Google sign-in; resolves to the genesense://auth?... link, or null when closed.
+        authSession: url => call("auth", { url }),
         // ble.connect(pairs) resolves to { name, services } once subscribed; then events reach ble.onevent.
         ble: { connect: pairs => call("ble.connect", { pairs }), disconnect: () => post({ type: "ble.disconnect" }), onevent: null },
         _resolve(id, value) { take(id)?.resolve(value); },
@@ -130,6 +150,7 @@ extension WebModel: WKScriptMessageHandler {
         switch body["type"] as? String {
         case "scan": scan(id: body["id"] as? Int ?? 0)
         case "scanQR": scanQR(id: body["id"] as? Int ?? 0)
+        case "auth": authSession(id: body["id"] as? Int ?? 0, url: body["url"] as? String ?? "")
         case "print": printPage()
         case "ble.connect": ble.connect(id: body["id"] as? Int ?? 0, pairs: body["pairs"] as? [[String: String]] ?? [])
         case "ble.disconnect": ble.disconnect()
@@ -142,11 +163,6 @@ extension WebModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         if action.shouldPerformDownload { return .download }
         guard let url = action.request.url else { return .cancel }
-        if url.host == Self.home.host, url.path == "/api/auth/google",
-           URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "mobile" }) == true {
-            await UIApplication.shared.open(url)
-            return .cancel
-        }
         if url.host == Self.home.host || ["about", "blob", "data"].contains(url.scheme ?? "") { return .allow }
         // Other sites, phone numbers and mail open in their own apps.
         await UIApplication.shared.open(url)
@@ -188,6 +204,12 @@ extension WebModel: WKUIDelegate {
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                  decisionHandler: @escaping (WKPermissionDecision) -> Void) {
         decisionHandler(type == .camera ? .grant : .deny)
+    }
+}
+
+extension WebModel: ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        webView.window ?? ASPresentationAnchor()
     }
 }
 
