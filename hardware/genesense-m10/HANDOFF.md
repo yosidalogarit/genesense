@@ -28,6 +28,12 @@ It is a test device, not a medical device; every screen says so.
     - The final value is the median of the readings within 15 % of the middle.
     - With fewer than 4 good readings at the end, it measures up to 24 s longer ("Đo thêm một chút...").
   - **Tested** with a simulated sensor and motion: clean, ghost spikes, ghosts at the start, a 4 s finger slip, one bump, 2 s of movement, a shaky hand, a real 158 bpm (shows the emergency screen).
+- **Finger detection** (13 November 2026; the owner found it slow, saw it "find" a finger when nothing was there, and found it still too sensitive to movement).
+  - **Fresh start per measurement:** each measurement restarts the SEN0518 (`0x20 [0,2]` stop, then `[0,1]` start, as in DFRobot's library). It is stopped again when the measuring screens close, so its red light is off between measurements.
+  - **Old numbers are ignored:** the sensor keeps showing its last numbers after the finger leaves. The program remembers what it shows at the start and treats those numbers as no finger until they change. Numbers that stay exactly the same for 20 s are also treated as no finger.
+  - **Faster:** counting begins at the first new, valid reading, instead of 2 readings plus 2.5 s.
+  - **Movement:** the M10's motion sensor measures the M10, not the finger, so the check (`MOVE_CHECK`) now only reacts to the M10 being picked up or shaken: 0.6 g for 1.5 s. Finger movement is handled by leaving out ghost readings.
+  - **Tested** in simulation: old numbers with no finger (it times out instead of measuring), a finger after 3 s (counting starts 0.4 s after its first reading), the M10 held in a moving hand (no pause), and the M10 picked up for 3 s (one pause).
 - **Clock and screen sleep.** After `CLOCK_AFTER` (45 s) without a touch, a resting screen becomes a big clock. It shows the date, the next medicine, the next measuring reminder and the last reading.
   - After `SLEEP_AFTER` (120 s) the backlight drops to `SLEEP_LEVEL` (10 %). The first touch or button press only wakes the screen.
   - Reminders, medicines and emergencies wake it themselves.

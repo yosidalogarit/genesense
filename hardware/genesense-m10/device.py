@@ -119,6 +119,26 @@ class Oximeter:
             print("SEN0518: %s" % e)
         return self.found
 
+    def restart(self):                       # a fresh start for each measurement: stop, then start collecting again
+        if not self.found:
+            return
+        try:
+            with self.board.io:
+                self.board.i2c.writeto_mem(OXI_ADDR, 0x20, [0x00, 0x02])   # "stop" (DFRobot library: sensorEndCollect)
+                time.sleep(0.05)
+                self.board.i2c.writeto_mem(OXI_ADDR, 0x20, [0x00, 0x01])   # "start"
+        except Exception as e:
+            print("SEN0518: %s" % e)
+
+    def stop(self):                          # between measurements: the sensor stops and its red light goes off
+        if not self.found:
+            return
+        try:
+            with self.board.io:
+                self.board.i2c.writeto_mem(OXI_ADDR, 0x20, [0x00, 0x02])
+        except Exception as e:
+            print("SEN0518: %s" % e)
+
     def read(self):                          # (spo2, heart rate); spo2 0 = no finger yet; None = no answer
         try:
             if not self.board._take(0.3):

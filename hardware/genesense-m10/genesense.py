@@ -18,9 +18,11 @@ DEVICE_NAME = "GeneSense-M10"                # the name shown in the app's devic
 MEASURE_SECONDS = 30                         # one measurement with the real sensor (a new value every 4 s)
 SETTLE_SECONDS = 8                           # ignore the first readings while the finger settles
 MOCK_SECONDS = 15                            # one measurement with mock values
-MOVE_LIMIT = 0.35                            # how much the M10 may move (smoothed, in g) before the count pauses.
-                                             # Bigger = less strict. It must also last MOVE_SECONDS: a bump is ignored
-MOVE_SECONDS = 0.8
+MOVE_CHECK = True                            # pause the count when the M10 itself is picked up or shaken. The motion
+                                             # sensor is in the M10, not the finger sensor: finger movement is handled by
+                                             # leaving out odd readings. False = no motion check at all
+MOVE_LIMIT = 0.6                             # how much the M10 may move (smoothed, in g) before the count pauses
+MOVE_SECONDS = 1.5                           # ... for this long: bumps, taps and a resting hand are ignored
 LIFT_SECONDS = 8                             # this long without a good reading = the finger came off
 GHOST_LIMIT = 0.2                            # a heart rate this far (20 %, at least 15 bpm) from the average so far is
                                              # treated as a ghost reading (a bump or a loose finger) and left out
@@ -157,8 +159,11 @@ class App:
         self.mock_oxi = MockOximeter()
         self.sensor_ok = self.oxi.start()
         print("SEN0518 found" if self.sensor_ok else "SEN0518 NOT found: using mock values")
+        if self.sensor_ok:
+            self.oxi.stop()                  # its red light stays off until a measurement starts
         self.screen = "idle"
         self.since = time.monotonic()
+        self.stale, self.fresh, self.same_count, self.last_raw = None, True, 0, None
         self.toast_text, self.toast_level, self.toast_until = "", SAFE, 0.0
         self.toast_at = 0.0
         self.flash = None                    # (rect, time) of the last pressed button, for the touch feedback
@@ -225,6 +230,8 @@ class App:
         return MEASURE_SECONDS if self.sensor_ok else MOCK_SECONDS
 
     def go(self, screen, wake=True):
+        if self.screen in ("place", "measure") and screen not in ("place", "measure") and self.sensor_ok:
+            self.oxi.stop()
         self.screen = screen
         self.since = time.monotonic()
         self.cloud.want_pairing = screen == "pair"
@@ -394,6 +401,14 @@ class App:
     def start_measuring(self):
         if not self.sensor_ok and self.board.ok:
             self.sensor_ok = self.oxi.start()    # plugged in just now?
+        elif self.sensor_ok:
+            self.oxi.restart()
+        # The SEN0518 keeps showing its last numbers for a while after the finger leaves. Remember what it shows
+        # now: those numbers do not mean a finger until they change.
+        self.stale = self.oxi.read() if self.sensor_ok else None
+        self.fresh = not self.stale or not self.stale[0]
+        self.same_count = 0
+        self.last_raw = None
         self.good_streak = self.bad_streak = 0
         self.live_hr = self.live_spo2 = 0
         self.wave = []
@@ -427,7 +442,14 @@ class App:
         else:
             got = self.mock_oxi.read()
         sp, hr = got if got else (0, 0)
-        good = got is not None and 70 <= sp <= 100 and 30 <= hr <= 220
+        if self.sensor_ok and got is not None:
+            if not self.fresh and got != self.stale:
+                self.fresh = True            # the numbers moved: a real finger
+            self.same_count = self.same_count + 1 if got == self.last_raw else 0
+            self.last_raw = got
+        # exactly the same numbers for 20 s: the sensor is repeating old values, nothing is on it
+        fresh = not self.sensor_ok or (self.fresh and self.same_count < 20)
+        good = got is not None and 70 <= sp <= 100 and 30 <= hr <= 220 and fresh
         if good:
             self.good_streak += 1
             self.bad_streak = 0
@@ -475,7 +497,7 @@ class App:
     def measure_tick(self, now):
         if self.screen == "place":
             if self.sensor_ok:
-                ready = self.good_streak >= 2 and now - self.since > 2.5
+                ready = self.good_streak >= 1 and now - self.since > 1.0   # the first new, valid numbers
                 if not ready and now - self.since > 45:
                     self.toast("Chưa đọc được, đeo lại cảm biến", ATTN)
                     self.voice.say("nofinger", cut=True)
@@ -499,7 +521,7 @@ class App:
             del self.wave[:-120]
         # hold still: the M10's motion sensor, smoothed over 1 s, against the position at the start. A bump or a
         # small shift is ignored; only movement that lasts MOVE_SECONDS pauses the count (it never starts over).
-        if now - self.last_accel >= 0.2:
+        if MOVE_CHECK and now - self.last_accel >= 0.2:
             self.last_accel = now
             a = self.board.accel()
             if a is not None:
