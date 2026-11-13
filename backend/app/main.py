@@ -85,7 +85,21 @@ CONTENT_SECURITY_POLICY = "; ".join([
 async def privacy_and_csrf(request: Request, call_next):
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         origin = request.headers.get("origin")
-        if request.headers.get("x-requested-with") != "HealthPredict" or (origin and origin not in allowed_origins):
+        try:
+            local_origin = urlsplit(origin) if origin else None
+        except ValueError:
+            local_origin = None
+        request_url = request.url
+        same_local_origin = bool(
+            settings.app_env == "development"
+            and local_origin
+            and request_url.scheme == "http"
+            and request_url.hostname in {"localhost", "127.0.0.1"}
+            and local_origin.scheme == request_url.scheme
+            and local_origin.hostname == request_url.hostname
+            and local_origin.netloc.lower() == request_url.netloc.lower()
+        )
+        if request.headers.get("x-requested-with") != "HealthPredict" or (origin and origin not in allowed_origins and not same_local_origin):
             return JSONResponse({"detail": "Yêu cầu không hợp lệ. Vui lòng tải lại trang."}, status_code=403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"

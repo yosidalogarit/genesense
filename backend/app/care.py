@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import current_user
@@ -20,8 +20,6 @@ router = APIRouter(prefix="/api/care", tags=["care"])
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 CODE_LENGTH = 8
 INVITE_HOURS = 24
-MAX_FAILED_CODES = 5
-FAILED_WINDOW_SECONDS = 15 * 60
 
 
 class CareLinkCreate(BaseModel):
@@ -105,16 +103,8 @@ async def create_invite(user: User = Depends(current_user), session: AsyncSessio
 @router.post("/links", status_code=201)
 async def accept_invite(payload: CareLinkCreate, user: User = Depends(current_user),
                         session: AsyncSession = Depends(get_session)):
-    # Counted in the database so the limit holds across workers and serverless instances.
-    since = datetime.now(timezone.utc) - timedelta(seconds=FAILED_WINDOW_SECONDS)
-    failures = await session.scalar(select(func.count()).select_from(CareCodeFailure).where(
-        CareCodeFailure.user_id == user.id, CareCodeFailure.created_at >= since))
-    if failures >= MAX_FAILED_CODES:
-        raise HTTPException(429, "Bạn đã nhập sai mã quá nhiều lần. Hãy thử lại sau 15 phút.")
     invite = await session.get(CareInvite, _digest(_normalize(payload.code)))
     if not invite or _aware(invite.expires_at) <= datetime.now(timezone.utc):
-        session.add(CareCodeFailure(user_id=user.id))
-        await session.commit()
         raise HTTPException(404, "Mã không đúng hoặc đã hết hạn. Hãy xin người thân tạo mã mới.")
     if invite.patient_id == user.id:
         raise HTTPException(400, "Đây là mã của chính bạn. Hãy gửi mã này cho người thân.")

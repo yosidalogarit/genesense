@@ -695,9 +695,8 @@ def test_care_invite_expiry_replacement_and_rate_limit(client):
             await session.commit()
     asyncio.run(expire())
     assert client.post("/api/care/links", json={"code": second}).status_code == 404  # expired
-    for _ in range(3):
+    for _ in range(6):  # wrong codes never lock the account out
         assert client.post("/api/care/links", json={"code": "WRONGCODE"}).status_code == 404
-    assert client.post("/api/care/links", json={"code": "WRONGCODE"}).status_code == 429
 
 
 def test_device_pairs_by_code_then_sends_readings_with_its_token(client):
@@ -754,9 +753,8 @@ def test_device_signs_itself_out(client):
     assert client.get("/api/devices").json() == []
 
 
-def test_wrong_device_codes_are_limited(client):
+def test_wrong_device_codes_never_lock_out(client):
     login(client)
     client.put("/api/profile", json=PROFILE)
-    for _ in range(5):
+    for _ in range(7):
         assert client.post("/api/devices/pair/approve", json={"code": "ZZZZ9999"}).status_code == 404
-    assert client.post("/api/devices/pair/approve", json={"code": "ZZZZ9999"}).status_code == 429

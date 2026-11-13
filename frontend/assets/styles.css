@@ -28,7 +28,7 @@
 /* Reserve the scrollbar lane so short pages (Giấy tờ) do not re-centre the layout. */
 html { scrollbar-gutter: stable; interpolate-size: allow-keywords; }
 * { box-sizing: border-box; }
-body { margin: 0; background: #f5f9ff; font-weight: 400; }
+body { margin: 0; background: #f5f9ff; font-weight: 400; -webkit-tap-highlight-color: transparent; }
 /* The login page's soft blue glow, fixed behind every screen so it looks the same at any scroll position (owner, 15 October 2026). */
 body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(ellipse at 80% 10%, #d9f3fb, transparent 65%); }
 ::selection { background: #cfe0f5; color: var(--ink); }
@@ -540,7 +540,8 @@ dialog::backdrop { background: #0d2c5473; }
 /* Motion: short ease-out, one move per interaction. Browsers without @starting-style simply snap. */
 :root { --ease-out: cubic-bezier(.16, 1, .3, 1); }
 .view:not(.hidden) { animation: view-in .22s var(--ease-out); }
-@keyframes view-in { from { opacity: .4; transform: translateY(6px); } }
+/* Keep the new view opaque so its background never flashes through on WebView. */
+@keyframes view-in { from { transform: translateY(4px); } to { transform: translateY(0); } }
 /* Whole screens (edit wizard, report, login) slide up; the app shell only fades, because a transform on it
    would detach the fixed bottom nav while the animation runs. */
 .onboarding-screen:not(.hidden), .report-screen:not(.hidden), .login-screen:not(.hidden) { animation: screen-in .26s var(--ease-out); }
@@ -937,6 +938,21 @@ body.no-glass .app-site-header, body.no-glass .nav-drawer, body.no-glass .mobile
 .ios-app .app-site-header { -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%); box-shadow: 0 4px 16px #173a6414; }
 .ios-app .mobile-nav { -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); box-shadow: none; }
 .ios-app dialog { -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); }
+
+/* Keep the frosted surfaces and small motion on touch phones without making scrolling stutter in WebView. */
+@media (max-width: 760px) and (hover: none) {
+  .app-site-header, .mobile-nav { -webkit-backdrop-filter: blur(12px) saturate(140%); backdrop-filter: blur(12px) saturate(140%); }
+  .app-site-header { background: rgba(237, 246, 255, .82); box-shadow: 0 3px 12px #173a6410; }
+  .mobile-nav { background: rgba(255, 255, 255, .88); }
+  .nav-scrim { -webkit-backdrop-filter: blur(4px) saturate(110%); backdrop-filter: blur(4px) saturate(110%); }
+  .nav-drawer { -webkit-backdrop-filter: blur(18px) saturate(145%); backdrop-filter: blur(18px) saturate(145%); transition-duration: .28s, .18s, 0s; }
+  .nav-drawer.is-open { transition-duration: .28s, .18s, 0s; }
+  .mobile-nav button { transition-duration: .16s, .16s, .16s; }
+  .mobile-nav button .icon { transition-duration: .18s; }
+  .mobile-nav button.active .icon { transform: translateY(-1px) scale(1.03); }
+  .measurement-tabs::before { transition-duration: .22s, .16s; }
+  .view:not(.hidden) { animation-duration: .18s; }
+}
 
 /* QR scanner for a GeneSense device's sign-in code */
 #devices-panel [data-qr-scan] { margin-bottom: 16px; }
