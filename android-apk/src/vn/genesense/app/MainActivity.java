@@ -37,7 +37,7 @@ public class MainActivity extends Activity {
         setContentView(web);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
-        settings.setUserAgentString(settings.getUserAgentString() + " GeneSenseAndroid/0.4.1");
+        settings.setUserAgentString(settings.getUserAgentString() + " GeneSenseAndroid/0.4.2");
         settings.setDomStorageEnabled(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
