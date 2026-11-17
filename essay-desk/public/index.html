@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Essay Desk</title>
+  <meta name="description" content="Paste a writing prompt, find academic and editorial sources, read, highlight and take notes.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f5c63'/%3E%3Cpath d='M9 9h14M9 15h14M9 21h8' stroke='%23fde68a' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Essay Desk</span>
+    </div>
+    <div class="project-switch">
+      <label class="sr-only" for="project-select">Project</label>
+      <select id="project-select"></select>
+      <button class="btn ghost" id="new-project" title="Start a new prompt">New prompt</button>
+    </div>
+    <div class="topbar-right">
+      <span class="status" id="status" title=""></span>
+      <div class="menu">
+        <button class="btn ghost" id="export-btn" aria-haspopup="true" aria-expanded="false">Export ▾</button>
+        <div class="menu-list" id="export-menu" hidden>
+          <button data-action="export-md">Notes &amp; highlights (.md)</button>
+          <button data-action="backup">Full backup (.json)</button>
+          <button data-action="restore">Restore backup…</button>
+          <hr>
+          <button data-action="delete-project" class="danger">Delete this project</button>
+        </div>
+        <input type="file" id="restore-file" accept="application/json,.json" hidden>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout" data-pane="research">
+    <!-- Research: prompt, analysis, queries, results -->
+    <section class="pane pane-research" aria-label="Research">
+      <div class="pane-scroll" id="research"></div>
+    </section>
+
+    <!-- Reader -->
+    <section class="pane pane-reader" aria-label="Reader">
+      <div class="pane-scroll" id="reader-scroll">
+        <div id="reader"></div>
+      </div>
+    </section>
+
+    <!-- Notebook -->
+    <section class="pane pane-notebook" aria-label="Notebook">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="highlights" aria-selected="true">Highlights <span class="count" id="hl-count"></span></button>
+        <button role="tab" data-tab="phrases" aria-selected="false">Phrases</button>
+        <button role="tab" data-tab="notes" aria-selected="false">Notes</button>
+      </div>
+      <div class="pane-scroll" id="notebook"></div>
+    </section>
+  </main>
+
+  <nav class="mobile-nav" aria-label="Panels">
+    <button data-pane="research" aria-current="true">Research</button>
+    <button data-pane="reader">Reader</button>
+    <button data-pane="notebook">Notebook</button>
+  </nav>
+
+  <!-- Floating toolbar shown over a text selection in the reader -->
+  <div class="sel-toolbar" id="sel-toolbar" hidden>
+    <button class="swatch hl-yellow" data-color="yellow" title="Argument (1)"></button>
+    <button class="swatch hl-green" data-color="green" title="Evidence (2)"></button>
+    <button class="swatch hl-blue" data-color="blue" title="Language (3)"></button>
+    <button class="swatch hl-pink" data-color="pink" title="Counter-argument (4)"></button>
+    <span class="sep"></span>
+    <button class="tb-btn" data-act="note" title="Highlight and add a note (N)">Note</button>
+    <button class="tb-btn" data-act="cite" title="Copy as a quote with citation">Quote</button>
+  </div>
+
+  <!-- Popover for an existing highlight -->
+  <div class="hl-pop" id="hl-pop" hidden>
+    <div class="hl-pop-colors">
+      <button class="swatch hl-yellow" data-color="yellow" title="Argument"></button>
+      <button class="swatch hl-green" data-color="green" title="Evidence"></button>
+      <button class="swatch hl-blue" data-color="blue" title="Language"></button>
+      <button class="swatch hl-pink" data-color="pink" title="Counter-argument"></button>
+      <button class="tb-btn danger" data-act="delete" title="Remove highlight">Remove</button>
+    </div>
+    <textarea id="hl-pop-note" rows="3" placeholder="Note: why this matters for your essay…"></textarea>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>
