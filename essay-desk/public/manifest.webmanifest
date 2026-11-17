@@ -1,0 +1,14 @@
+{
+  "name": "Essay Desk",
+  "short_name": "Essay Desk",
+  "description": "Find academic and editorial sources for a writing prompt, then read, highlight and take notes.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#0f5c63",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

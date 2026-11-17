@@ -82,3 +82,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(`  Editorial search: ${s.editorial.length ? s.editorial.join(', ') : 'off — add TAVILY_API_KEY, BRAVE_API_KEY or GUARDIAN_API_KEY'}`);
   });
 }
+
+// Vercel (and other serverless hosts) import the app instead of running this file.
+export default app;

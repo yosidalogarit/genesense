@@ -12,7 +12,20 @@ A research desk for the writing section of the HSG Quốc gia English exam (IELT
 
 ## Run it
 
-You need Node.js 20 or newer.
+> **Why `localhost:5178` said "refused to connect":** `localhost` always means *your own computer*. The app was only running inside Claude's cloud test machine, so nothing was running on your PC. Use one of the options below.
+
+### Option A: online (no install)
+
+Open the hosted Essay Desk URL. To keep it as its own window with a taskbar icon, open it in Edge or Chrome, then choose **⋯ → Apps → Install Essay Desk**.
+
+### Option B: on your Windows PC
+
+1. Install **Node.js LTS** from <https://nodejs.org>.
+2. Download this folder (`essay-desk`).
+3. Double-click **`start-essay-desk.bat`**. The first run installs everything, creates `.env` and opens <http://localhost:5178>.
+4. Keep the black window open while you use the app. Closing it stops the app, and `localhost` refuses to connect again.
+
+Or, from a terminal:
 
 ```bash
 cd essay-desk
@@ -20,8 +33,6 @@ npm install
 cp .env.example .env     # then add your keys (all optional)
 npm start
 ```
-
-Open <http://localhost:5178>.
 
 To use it from a phone on the same Wi-Fi, set `HOST=0.0.0.0` in `.env`. Then open `http://<your-computer's-IP>:5178` on the phone; the layout switches to tabs.
 
