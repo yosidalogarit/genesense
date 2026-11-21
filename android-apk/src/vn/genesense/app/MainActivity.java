@@ -12,6 +12,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebSettings;
+import android.webkit.CookieManager;
 import android.widget.Toast;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -37,7 +38,8 @@ public class MainActivity extends Activity {
         setContentView(web);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
-        settings.setUserAgentString(settings.getUserAgentString() + " GeneSenseAndroid/0.4.2");
+        settings.setUserAgentString(settings.getUserAgentString() + " GeneSenseAndroid/0.4.3");
+        CookieManager.getInstance().setAcceptCookie(true);
         settings.setDomStorageEnabled(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
@@ -78,13 +80,22 @@ public class MainActivity extends Activity {
     private String signInReturn(Intent intent) {
         Uri data = intent == null ? null : intent.getData();
         if (data == null || !"genesense".equals(data.getScheme()) || !"auth".equals(data.getHost())) return HOME;
-        return HOME + "#app-login?" + (data.getEncodedQuery() == null ? "" : data.getEncodedQuery());
+        // A fragment-only load reuses the current document: older web builds only redeem during boot.
+        // A fresh, non-secret query forces a full navigation for both warm and cold app returns.
+        return HOME + "?app_return=" + System.currentTimeMillis() + "#app-login?" +
+            (data.getEncodedQuery() == null ? "" : data.getEncodedQuery());
     }
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
         String url = signInReturn(intent);
         if (!HOME.equals(url)) web.loadUrl(url);
+    }
+
+    @Override protected void onPause() {
+        CookieManager.getInstance().flush();
+        super.onPause();
     }
 
     public void requestBluetoothPermissions() {

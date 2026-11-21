@@ -2395,12 +2395,13 @@ async function boot() {
     const loginError = new URLSearchParams(location.search).get("auth_error");
     errorAt("#login-message", loginError ? "Chưa đăng nhập được với Google. Hãy thử lại hoặc chọn tài khoản khác." : !config.google_enabled ? "Đăng nhập bằng Google sẽ có trong bản chính thức." : "");
     if (loginError) window.history.replaceState(null, "", "/");
+    // Consume the app return before checking an existing (possibly trial) session.
+    if (await resumeGoogleLogin(message => { screen("login"); errorAt("#login-message", message); })) return;
     let user;
     try { user = await api.me(); } catch (error) { if (error.status !== 401) throw error; }
     if (user) await enterAccount(user);
     else {
       screen("login");
-      void resumeGoogleLogin(message => errorAt("#login-message", message));
       if (!loginError) { offerDeviceImport(); void offerDevicePair(); }
     }
   } catch (error) {
@@ -2667,6 +2668,11 @@ function bindEvents() {
   accountChannel?.addEventListener("message", () => { clearAccount(); boot(); });
   // Links like the header logo only change the hash; route on every hash change (also back/forward).
   window.addEventListener("hashchange", () => {
+    // Android may deliver a deep link to the already-running WebView without reloading it.
+    if (location.hash.startsWith("#app-login?")) {
+      void resumeGoogleLogin(message => { screen("login"); errorAt("#login-message", message); });
+      return;
+    }
     if (location.hash.startsWith("#" + DEVICE_IMPORT_ROUTE)) { takeDeviceImportFromLink(); offerDeviceImport(); return; }
     if (location.hash.startsWith("#" + DEVICE_PAIR_ROUTE)) { takeDevicePairFromLink(); void offerDevicePair(); return; }
     if (state.user && state.health) navigate(location.hash.slice(1) || "dashboard");
@@ -2676,6 +2682,7 @@ function bindEvents() {
   // However the dialog closes without saving (Bỏ qua, X, Esc, back), the reading is dropped so it does not ask again.
   $("#device-import-dialog").addEventListener("close", clearDeviceImport);
   window.addEventListener("popstate", () => {
+    if (location.hash.startsWith("#app-login?")) return;
     // Our own step back after a layer closed by its button: only keep the address on the page shown.
     if (layerPops) { layerPops--; if (state.user && state.health) history.replaceState(null, "", "#" + state.view); return; }
     const dialog = $$("dialog[open][data-layer]").sort((a, b) => b.dataset.layer - a.dataset.layer)[0];

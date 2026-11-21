@@ -77,6 +77,25 @@ def test_expired_attempt_and_configuration(client, monkeypatch):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_app_return_replaces_trial_session_without_sharing_browser_cookies(client, monkeypatch):
+    enable_google(monkeypatch)
+    fake_google(monkeypatch, sub="mobile-replaces-trial")
+    trial = client.post("/api/auth/demo").json()
+    previous_cookie = client.cookies.get(auth.COOKIE_NAME)
+    verifier = "c" * 64
+    start = client.post("/api/auth/mobile/start", json={"challenge": auth.digest(verifier)}).json()
+    result = google_in_browser(start["url"])
+    code = parse_qs(urlsplit(result.headers["location"]).query)["code"][0]
+    response = client.post("/api/auth/mobile/redeem", json={"code": code, "verifier": verifier})
+    assert response.status_code == 200
+    assert "httponly" in response.headers["set-cookie"].lower()
+    current = client.get("/api/auth/me").json()
+    assert current["provider"] == "google" and current["id"] != trial["id"]
+    client.cookies.clear()
+    client.cookies.set(auth.COOKIE_NAME, previous_cookie)
+    assert client.get("/api/auth/me").status_code == 401
+
+
 def test_live_attempts_are_capped(client, monkeypatch):
     enable_google(monkeypatch)
     monkeypatch.setattr(mobile_auth, "MAX_LIVE_ATTEMPTS", 2)

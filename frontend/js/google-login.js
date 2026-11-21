@@ -7,6 +7,8 @@ const android = () => /GeneSenseAndroid\//.test(navigator.userAgent);
 const nativeApp = () => android() || document.documentElement.classList.contains("ios-app");
 const storageKey = "genesense-app-login";
 const RETURN_ROUTE = "#app-login?";
+let finishing = false;
+let starting = false;
 
 async function post(path, body) {
   const controller = new AbortController();
@@ -23,34 +25,50 @@ async function post(path, body) {
   } finally { clearTimeout(timeout); }
 }
 
-function takeVerifier() {
+function readVerifier() {
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(storageKey) || "null"); localStorage.removeItem(storageKey); } catch {}
-  return saved && Date.now() < saved.expires ? saved.verifier : null;
+  try { saved = JSON.parse(localStorage.getItem(storageKey) || "null"); } catch {}
+  if (saved && Date.now() < saved.expires && /^[a-f0-9]{64}$/.test(saved.verifier)) return saved.verifier;
+  clearVerifier();
+  return null;
 }
+function clearVerifier() { try { localStorage.removeItem(storageKey); } catch {} }
 
 // The query part of genesense://auth?... : redeem the code with this app's verifier, then reload signed in.
 async function finish(query, showMessage) {
   const params = new URLSearchParams(query);
-  const verifier = takeVerifier();
-  if (params.get("error") || !params.get("code") || !verifier) throw new Error("Phiên đăng nhập đã hết hạn. Hãy thử lại.");
+  const verifier = readVerifier();
+  if (params.get("error") || !params.get("code") || !verifier) {
+    clearVerifier();
+    throw new Error("Phiên đăng nhập đã hết hạn. Hãy thử lại.");
+  }
   showMessage("Đang đăng nhập…");
   await post("redeem", { code: params.get("code"), verifier });
+  clearVerifier();
   location.reload();
 }
 
 // Android comes back to the app at "#app-login?code=...".
 export async function resumeGoogleLogin(showMessage) {
-  if (!location.hash.startsWith(RETURN_ROUTE)) return;
+  if (finishing) return true;
+  if (!location.hash.startsWith(RETURN_ROUTE)) return false;
+  finishing = true;
   const query = location.hash.slice(RETURN_ROUTE.length);
-  window.history.replaceState(null, "", location.pathname + location.search);
+  const clean = new URL(location.href);
+  clean.hash = "";
+  clean.searchParams.delete("app_return");
+  window.history.replaceState(null, "", clean.pathname + clean.search);
   try { await finish(query, showMessage); } catch (error) { showMessage(error.message); }
+  finally { finishing = false; }
+  return true;
 }
 
 export async function loginWithGoogle(showMessage) {
   if (!nativeApp()) { location.assign("/api/auth/google"); return; }
   const ios = !android();
   if (ios && !window.gsNative?.authSession) { showMessage("Hãy cập nhật ứng dụng GeneSense để đăng nhập bằng Google."); return; }
+  if (starting || finishing) return;
+  starting = true;
   try {
     const verifier = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, "0")).join("");
     const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
@@ -59,7 +77,8 @@ export async function loginWithGoogle(showMessage) {
     localStorage.setItem(storageKey, JSON.stringify({ verifier, expires: Date.now() + 300000 }));
     if (!ios) { location.assign(data.url); return; }   // Android opens the browser, then reopens the app
     const back = await window.gsNative.authSession(data.url);
-    if (!back) { takeVerifier(); return; }            // closed the sign-in sheet
+    if (!back) { clearVerifier(); return; }            // closed the sign-in sheet
     await finish(back.slice(back.indexOf("?") + 1), showMessage);
   } catch (error) { showMessage(error.message); }
+  finally { starting = false; }
 }
